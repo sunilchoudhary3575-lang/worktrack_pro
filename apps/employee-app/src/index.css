@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background-color: #080f0e;
+    color: #dcfce7;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    user-select: none;
+  }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: #0c1612; }
+  ::-webkit-scrollbar-thumb { background: #1f362c; border-radius: 2px; }
+
+  ::selection {
+    background-color: rgba(34, 197, 94, 0.3);
+    color: #dcfce7;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-surface-800/70 backdrop-blur-sm border border-white/5 rounded-2xl;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold text-sm
+           bg-brand-600 hover:bg-brand-500 text-white
+           transition-all duration-200 active:scale-95
+           shadow-glow-green
+           disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold text-sm
+           bg-danger-600 hover:bg-danger-500 text-white
+           transition-all duration-200 active:scale-95
+           shadow-glow-red
+           disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-medium text-sm
+           bg-surface-700 hover:bg-surface-600 text-white/70 hover:text-white
+           border border-white/10 hover:border-white/20
+           transition-all duration-200 active:scale-95
+           disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .input-field {
+    @apply w-full px-3 py-2.5 rounded-xl bg-surface-700 border border-white/10
+           text-white placeholder:text-white/25 text-sm
+           focus:outline-none focus:border-brand-500/50 focus:ring-1 focus:ring-brand-500/30
+           transition-colors duration-200;
+  }
+
+  /* Live monitoring indicator strip */
+  .monitoring-strip {
+    @apply flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium;
+  }
+
+  .monitoring-strip-active {
+    @apply monitoring-strip bg-brand-600/15 border border-brand-500/25 text-brand-300;
+  }
+
+  .monitoring-strip-inactive {
+    @apply monitoring-strip bg-surface-700/50 border border-white/5 text-white/30;
+  }
+}
+
+.titlebar-drag { -webkit-app-region: drag; }
+.titlebar-no-drag { -webkit-app-region: no-drag; }

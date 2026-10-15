@@ -1,0 +1,23 @@
+{
+  "name": "worktrack-pro",
+  "version": "1.0.0",
+  "description": "WorkTrack Pro - Employee Monitoring Desktop Suite",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:admin": "npm run dev --workspace=apps/admin-app",
+    "dev:employee": "npm run dev --workspace=apps/employee-app",
+    "build:admin": "npm run build --workspace=apps/admin-app",
+    "build:employee": "npm run build --workspace=apps/employee-app",
+    "build:shared": "npm run build --workspace=packages/shared",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}
