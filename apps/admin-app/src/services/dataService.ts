@@ -1,17 +1,21 @@
 import type {
   Employee,
+  EmployeeRole,
   Device,
+  DeviceRegistrationRecord,
   WorkSession,
   Screenshot,
   MonitoringSettings,
   DailySummary,
   WeeklySummary,
   ScreenViewRequest,
+  PreAuthorizationRecord,
   AppUsage,
   WebUsage,
   ActivityMetric,
   ApprovalRequest,
 } from '@worktrack-pro/shared'
+import { CURRENT_PRE_AUTH_POLICY } from '@worktrack-pro/shared'
 
 // ─── Mock Data ───────────────────────────────────────────────
 // ⚠️  ALL DATA BELOW IS MOCK DATA FOR DEVELOPMENT ONLY.
@@ -67,6 +71,26 @@ export const MOCK_EMPLOYEES: Employee[] = [
     department: 'Marketing',
     avatarUrl: undefined,
     createdAt: new Date('2024-05-12'),
+    updatedAt: new Date('2024-10-01'),
+  },
+  {
+    id: 'emp_006',
+    name: 'Alex Mercer',
+    email: 'alex.mercer@example.com',
+    role: 'employee',
+    department: 'Engineering',
+    avatarUrl: undefined,
+    createdAt: new Date('2024-09-01'),
+    updatedAt: new Date('2024-10-01'),
+  },
+  {
+    id: 'emp_007',
+    name: 'Jordan Taylor',
+    email: 'jordan.taylor@example.com',
+    role: 'employee',
+    department: 'Support',
+    avatarUrl: undefined,
+    createdAt: new Date('2024-09-15'),
     updatedAt: new Date('2024-10-01'),
   },
 ]
@@ -136,6 +160,91 @@ export const MOCK_DEVICES: Device[] = [
     lastSeen: new Date(),
     registeredAt: new Date('2024-05-13'),
   },
+  {
+    id: 'dev_006',
+    employeeId: 'emp_006',
+    name: 'WORKSTATION-AM-01',
+    hostname: 'WORKSTATION-AM-01',
+    os: 'windows',
+    osVersion: 'Windows 11 Pro',
+    appVersion: '1.0.0',
+    status: 'idle',
+    ipAddress: '192.168.1.108',
+    lastSeen: new Date(Date.now() - 30 * 60_000),
+    registeredAt: new Date(Date.now() - 2 * 3600_000),
+  },
+]
+
+export const MOCK_DEVICE_REGISTRATIONS: DeviceRegistrationRecord[] = [
+  {
+    deviceId: 'dev_001',
+    deviceName: 'LAPTOP-SJ-001',
+    hostname: 'LAPTOP-SJ-001',
+    employeeId: 'emp_001',
+    employeeName: 'Sarah Johnson',
+    department: 'Engineering',
+    status: 'approved',
+    requestedAt: new Date('2024-01-16T08:30:00Z'),
+    reviewedAt: new Date('2024-01-16T09:00:00Z'),
+    reviewedBy: 'Admin User',
+  },
+  {
+    deviceId: 'dev_002',
+    deviceName: 'LAPTOP-MC-001',
+    hostname: 'LAPTOP-MC-001',
+    employeeId: 'emp_002',
+    employeeName: 'Marcus Chen',
+    department: 'Design',
+    status: 'approved',
+    requestedAt: new Date('2024-02-21T09:15:00Z'),
+    reviewedAt: new Date('2024-02-21T09:45:00Z'),
+    reviewedBy: 'Admin User',
+  },
+  {
+    deviceId: 'dev_003',
+    deviceName: 'LAPTOP-PS-001',
+    hostname: 'LAPTOP-PS-001',
+    employeeId: 'emp_003',
+    employeeName: 'Priya Sharma',
+    department: 'Engineering',
+    status: 'approved',
+    requestedAt: new Date('2024-03-11T10:00:00Z'),
+    reviewedAt: new Date('2024-03-11T10:30:00Z'),
+    reviewedBy: 'Admin User',
+  },
+  {
+    deviceId: 'dev_004',
+    deviceName: 'LAPTOP-JW-001',
+    hostname: 'LAPTOP-JW-001',
+    employeeId: 'emp_004',
+    employeeName: 'James Wilson',
+    department: 'Operations',
+    status: 'rejected',
+    requestedAt: new Date('2024-04-05T11:00:00Z'),
+    reviewedAt: new Date('2024-04-05T11:45:00Z'),
+    reviewedBy: 'Admin User',
+    rejectionReason: 'Hardware serial mismatch with IT inventory policy.',
+  },
+  {
+    deviceId: 'dev_005',
+    deviceName: 'LAPTOP-AP-001',
+    hostname: 'LAPTOP-AP-001',
+    employeeId: 'emp_005',
+    employeeName: 'Aisha Patel',
+    department: 'Marketing',
+    status: 'pending_approval',
+    requestedAt: new Date(Date.now() - 3 * 3600_000),
+  },
+  {
+    deviceId: 'dev_006',
+    deviceName: 'WORKSTATION-AM-01',
+    hostname: 'WORKSTATION-AM-01',
+    employeeId: 'emp_006',
+    employeeName: 'Alex Mercer',
+    department: 'Engineering',
+    status: 'pending_approval',
+    requestedAt: new Date(Date.now() - 45 * 60_000),
+  },
 ]
 
 export const MOCK_SESSIONS: WorkSession[] = [
@@ -143,22 +252,60 @@ export const MOCK_SESSIONS: WorkSession[] = [
     id: 'sess_001',
     employeeId: 'emp_001',
     deviceId: 'dev_001',
-    status: 'active',
+    status: 'working',
     startedAt: new Date(Date.now() - 3 * 60 * 60_000),
+    breaks: [
+      {
+        id: 'brk_001',
+        reason: 'coffee',
+        customReason: 'Morning Coffee',
+        startedAt: new Date(Date.now() - 110 * 60_000),
+        endedAt: new Date(Date.now() - 95 * 60_000),
+        durationSeconds: 900,
+      },
+    ],
+    durationSeconds: 3 * 3600,
+    breakDurationSeconds: 900,
+    workDurationSeconds: 3 * 3600 - 900,
   },
   {
     id: 'sess_002',
     employeeId: 'emp_002',
     deviceId: 'dev_002',
-    status: 'active',
+    status: 'on_break',
     startedAt: new Date(Date.now() - 5 * 60 * 60_000),
+    pausedAt: new Date(Date.now() - 25 * 60_000),
+    breaks: [
+      {
+        id: 'brk_002',
+        reason: 'lunch',
+        customReason: 'Design Team Lunch',
+        startedAt: new Date(Date.now() - 25 * 60_000),
+      },
+    ],
+    durationSeconds: 5 * 3600,
+    breakDurationSeconds: 1500,
+    workDurationSeconds: 5 * 3600 - 1500,
   },
   {
     id: 'sess_003',
-    employeeId: 'emp_005',
-    deviceId: 'dev_005',
-    status: 'active',
-    startedAt: new Date(Date.now() - 1.5 * 60 * 60_000),
+    employeeId: 'emp_003',
+    deviceId: 'dev_003',
+    status: 'ended',
+    startedAt: new Date(Date.now() - 26 * 60 * 60_000),
+    endedAt: new Date(Date.now() - 18 * 60 * 60_000),
+    durationSeconds: 8 * 3600,
+    breakDurationSeconds: 3600,
+    workDurationSeconds: 7 * 3600,
+    breaks: [
+      {
+        id: 'brk_003',
+        reason: 'lunch',
+        startedAt: new Date(Date.now() - 22 * 60 * 60_000),
+        endedAt: new Date(Date.now() - 21 * 60 * 60_000),
+        durationSeconds: 3600,
+      },
+    ],
   },
   {
     id: 'sess_004',
@@ -168,15 +315,37 @@ export const MOCK_SESSIONS: WorkSession[] = [
     startedAt: new Date(Date.now() - 28 * 60 * 60_000),
     endedAt: new Date(Date.now() - 20 * 60 * 60_000),
     durationSeconds: 8 * 3600,
+    breakDurationSeconds: 2700,
+    workDurationSeconds: 8 * 3600 - 2700,
+    breaks: [
+      {
+        id: 'brk_004',
+        reason: 'lunch',
+        startedAt: new Date(Date.now() - 25 * 60 * 60_000),
+        endedAt: new Date(Date.now() - (24 * 60 + 15) * 60_000),
+        durationSeconds: 2700,
+      },
+    ],
   },
   {
     id: 'sess_005',
     employeeId: 'emp_003',
     deviceId: 'dev_003',
     status: 'ended',
-    startedAt: new Date(Date.now() - 26 * 60 * 60_000),
-    endedAt: new Date(Date.now() - 18 * 60 * 60_000),
-    durationSeconds: 6.5 * 3600,
+    startedAt: new Date(Date.now() - 50 * 60 * 60_000),
+    endedAt: new Date(Date.now() - 42 * 60 * 60_000),
+    durationSeconds: 8 * 3600,
+    breakDurationSeconds: 1800,
+    workDurationSeconds: 8 * 3600 - 1800,
+    breaks: [
+      {
+        id: 'brk_005',
+        reason: 'coffee',
+        startedAt: new Date(Date.now() - 46 * 60 * 60_000),
+        endedAt: new Date(Date.now() - (45 * 60 + 30) * 60_000),
+        durationSeconds: 1800,
+      },
+    ],
   },
 ]
 
@@ -211,6 +380,32 @@ export const MOCK_SETTINGS: MonitoringSettings = {
   updatedBy: 'admin_001',
 }
 
+export const MOCK_SCREEN_VIEW_REQUESTS: ScreenViewRequest[] = [
+  {
+    id: 'req_init_001',
+    adminId: 'admin_001',
+    adminName: 'Security Admin',
+    employeeId: 'emp_002',
+    employeeName: 'Marcus Chen',
+    deviceId: 'dev_002',
+    deviceName: 'LAPTOP-MC-001',
+    status: 'pending',
+    requestedAt: new Date(Date.now() - 20 * 1000),
+    expiresAt: new Date(Date.now() + 40 * 1000),
+    requiresEmployeeApproval: true,
+  },
+]
+
+export const MOCK_PRE_AUTHORIZATIONS: PreAuthorizationRecord[] = []
+
+// Snapshot copies for reset
+const INITIAL_EMPLOYEES = JSON.stringify(MOCK_EMPLOYEES)
+const INITIAL_DEVICES = JSON.stringify(MOCK_DEVICES)
+const INITIAL_REGISTRATIONS = JSON.stringify(MOCK_DEVICE_REGISTRATIONS)
+const INITIAL_SESSIONS = JSON.stringify(MOCK_SESSIONS)
+const INITIAL_SCREEN_VIEW_REQUESTS = JSON.stringify(MOCK_SCREEN_VIEW_REQUESTS)
+const INITIAL_PRE_AUTHORIZATIONS = JSON.stringify(MOCK_PRE_AUTHORIZATIONS)
+
 // ─── Data Service Interface ───────────────────────────────────
 // Replace the mock implementations below with Firebase calls in Phase 2.
 // Keep function signatures identical to avoid breaking callers.
@@ -218,37 +413,293 @@ export const MOCK_SETTINGS: MonitoringSettings = {
 export const dataService = {
   // Employees
   getEmployees: async (): Promise<Employee[]> => {
-    await delay(300)
+    await delay(150)
     return [...MOCK_EMPLOYEES]
   },
 
   getEmployee: async (id: string): Promise<Employee | null> => {
-    await delay(150)
+    await delay(100)
     return MOCK_EMPLOYEES.find(e => e.id === id) ?? null
+  },
+
+  createEmployee: async (data: {
+    id: string
+    name: string
+    email: string
+    role?: EmployeeRole
+    department?: string
+  }): Promise<Employee> => {
+    await delay(150)
+    const trimmedId = data.id?.trim()
+    const trimmedName = data.name?.trim()
+    const trimmedEmail = data.email?.trim()
+
+    if (!trimmedId) throw new Error('Employee ID is required.')
+    if (!trimmedName) throw new Error('Employee Full Name is required.')
+    if (!trimmedEmail) throw new Error('Email address is required.')
+    if (!trimmedEmail.includes('@') || !trimmedEmail.includes('.')) {
+      throw new Error('Please provide a valid email address.')
+    }
+
+    const existing = MOCK_EMPLOYEES.find(e => e.id.toLowerCase() === trimmedId.toLowerCase())
+    if (existing) {
+      throw new Error(`Duplicate Employee ID: An employee with ID "${trimmedId}" already exists.`)
+    }
+
+    const newEmp: Employee = {
+      id: trimmedId,
+      name: trimmedName,
+      email: trimmedEmail,
+      role: data.role || 'employee',
+      department: data.department?.trim() || 'General',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
+    MOCK_EMPLOYEES.push(newEmp)
+    return { ...newEmp }
+  },
+
+  updateEmployee: async (
+    id: string,
+    updates: {
+      name?: string
+      email?: string
+      role?: EmployeeRole
+      department?: string
+    }
+  ): Promise<Employee> => {
+    await delay(150)
+    const emp = MOCK_EMPLOYEES.find(e => e.id === id)
+    if (!emp) {
+      throw new Error(`Employee with ID "${id}" not found.`)
+    }
+
+    if (updates.name !== undefined) {
+      if (!updates.name.trim()) throw new Error('Employee Name cannot be empty.')
+      emp.name = updates.name.trim()
+    }
+    if (updates.email !== undefined) {
+      if (!updates.email.trim() || !updates.email.includes('@')) {
+        throw new Error('Please provide a valid email address.')
+      }
+      emp.email = updates.email.trim()
+    }
+    if (updates.department !== undefined) {
+      emp.department = updates.department.trim()
+    }
+    if (updates.role !== undefined) {
+      emp.role = updates.role
+    }
+    emp.updatedAt = new Date()
+
+    return { ...emp }
   },
 
   // Devices
   getDevices: async (): Promise<Device[]> => {
-    await delay(300)
+    await delay(150)
     return [...MOCK_DEVICES]
   },
 
   getDevicesByEmployee: async (employeeId: string): Promise<Device[]> => {
-    await delay(150)
+    await delay(100)
     return MOCK_DEVICES.filter(d => d.employeeId === employeeId)
+  },
+
+  getDeviceByEmployee: async (employeeId: string): Promise<Device | null> => {
+    await delay(100)
+    return MOCK_DEVICES.find(d => d.employeeId === employeeId) ?? null
+  },
+
+  // Device Registrations
+  getDeviceRegistrations: async (): Promise<DeviceRegistrationRecord[]> => {
+    await delay(150)
+    const list = [...MOCK_DEVICE_REGISTRATIONS]
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem('worktrack_registration_record') || localStorage.getItem('worktrack_device_registration')
+      if (raw) {
+        try {
+          const rec = JSON.parse(raw)
+          if (rec && rec.deviceId && !list.some(r => r.deviceId === rec.deviceId)) {
+            list.push({
+              ...rec,
+              requestedAt: new Date(rec.requestedAt),
+              reviewedAt: rec.reviewedAt ? new Date(rec.reviewedAt) : undefined,
+            })
+          }
+        } catch {}
+      }
+    }
+    return list
+  },
+
+  getDeviceRegistration: async (deviceId: string): Promise<DeviceRegistrationRecord | null> => {
+    await delay(100)
+    const inMem = MOCK_DEVICE_REGISTRATIONS.find(r => r.deviceId === deviceId)
+    if (inMem) return inMem
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem('worktrack_registration_record') || localStorage.getItem('worktrack_device_registration')
+      if (raw) {
+        try {
+          const rec = JSON.parse(raw)
+          if (rec && rec.deviceId === deviceId) {
+            return {
+              ...rec,
+              requestedAt: new Date(rec.requestedAt),
+              reviewedAt: rec.reviewedAt ? new Date(rec.reviewedAt) : undefined,
+            }
+          }
+        } catch {}
+      }
+    }
+    return null
+  },
+
+  getDeviceRegistrationByEmployee: async (employeeId: string): Promise<DeviceRegistrationRecord | null> => {
+    await delay(100)
+    return MOCK_DEVICE_REGISTRATIONS.find(r => r.employeeId === employeeId) ?? null
+  },
+
+  approveDeviceRegistration: async (deviceId: string, reviewedBy = 'Admin User'): Promise<DeviceRegistrationRecord> => {
+    await delay(150)
+    const rec = MOCK_DEVICE_REGISTRATIONS.find(r => r.deviceId === deviceId)
+    if (!rec) {
+      throw new Error(`Device registration record not found for device: "${deviceId}".`)
+    }
+    if (rec.status === 'approved') {
+      throw new Error(`Duplicate approval rejected: Device "${deviceId}" is already approved.`)
+    }
+    if (rec.status !== 'pending_approval') {
+      throw new Error(`Invalid state transition: Cannot approve device in status "${rec.status}". Only "pending_approval" records may be approved.`)
+    }
+    rec.status = 'approved'
+    rec.reviewedAt = new Date()
+    rec.reviewedBy = reviewedBy
+    rec.rejectionReason = undefined
+
+    // Update or add corresponding device in MOCK_DEVICES
+    const device = MOCK_DEVICES.find(d => d.id === deviceId)
+    if (device) {
+      device.status = 'online'
+      device.lastSeen = new Date()
+    } else {
+      MOCK_DEVICES.push({
+        id: deviceId,
+        employeeId: rec.employeeId,
+        name: rec.deviceName,
+        hostname: rec.hostname || rec.deviceName,
+        os: 'windows',
+        osVersion: 'Windows 11 Pro',
+        appVersion: '1.0.0',
+        status: 'online',
+        lastSeen: new Date(),
+        registeredAt: new Date(),
+      })
+    }
+
+    return { ...rec }
+  },
+
+  rejectDeviceRegistration: async (deviceId: string, reason: string, reviewedBy = 'Admin User'): Promise<DeviceRegistrationRecord> => {
+    await delay(150)
+    const trimmedReason = reason?.trim()
+    if (!trimmedReason) {
+      throw new Error('Rejection failed: A valid rejection reason is required.')
+    }
+    const rec = MOCK_DEVICE_REGISTRATIONS.find(r => r.deviceId === deviceId)
+    if (!rec) {
+      throw new Error(`Device registration record not found for device: "${deviceId}".`)
+    }
+    if (rec.status === 'rejected') {
+      throw new Error(`Duplicate rejection rejected: Device "${deviceId}" is already rejected.`)
+    }
+    if (rec.status !== 'pending_approval') {
+      throw new Error(`Invalid state transition: Cannot reject device in status "${rec.status}". Only "pending_approval" records may be rejected.`)
+    }
+    rec.status = 'rejected'
+    rec.reviewedAt = new Date()
+    rec.reviewedBy = reviewedBy
+    rec.rejectionReason = trimmedReason
+
+    const device = MOCK_DEVICES.find(d => d.id === deviceId)
+    if (device) {
+      device.status = 'offline'
+    }
+
+    return { ...rec }
+  },
+
+  // Reset helper for testing
+  resetMockData: async (): Promise<void> => {
+    MOCK_EMPLOYEES.length = 0
+    MOCK_EMPLOYEES.push(...JSON.parse(INITIAL_EMPLOYEES).map((e: any) => ({
+      ...e,
+      createdAt: new Date(e.createdAt),
+      updatedAt: new Date(e.updatedAt),
+    })))
+
+    MOCK_DEVICES.length = 0
+    MOCK_DEVICES.push(...JSON.parse(INITIAL_DEVICES).map((d: any) => ({
+      ...d,
+      lastSeen: new Date(d.lastSeen),
+      registeredAt: new Date(d.registeredAt),
+    })))
+
+    MOCK_DEVICE_REGISTRATIONS.length = 0
+    MOCK_DEVICE_REGISTRATIONS.push(...JSON.parse(INITIAL_REGISTRATIONS).map((r: any) => ({
+      ...r,
+      requestedAt: new Date(r.requestedAt),
+      reviewedAt: r.reviewedAt ? new Date(r.reviewedAt) : undefined,
+    })))
+
+    MOCK_SESSIONS.length = 0
+    MOCK_SESSIONS.push(...JSON.parse(INITIAL_SESSIONS).map((s: any) => ({
+      ...s,
+      startedAt: new Date(s.startedAt),
+      endedAt: s.endedAt ? new Date(s.endedAt) : undefined,
+      pausedAt: s.pausedAt ? new Date(s.pausedAt) : undefined,
+      breaks: s.breaks?.map((b: any) => ({
+        ...b,
+        startedAt: new Date(b.startedAt),
+        endedAt: b.endedAt ? new Date(b.endedAt) : undefined,
+      })),
+    })))
+
+    MOCK_SCREEN_VIEW_REQUESTS.length = 0
+    MOCK_SCREEN_VIEW_REQUESTS.push(...JSON.parse(INITIAL_SCREEN_VIEW_REQUESTS).map((r: any) => ({
+      ...r,
+      requestedAt: new Date(r.requestedAt),
+      respondedAt: r.respondedAt ? new Date(r.respondedAt) : undefined,
+      endedAt: r.endedAt ? new Date(r.endedAt) : undefined,
+      stoppedAt: r.stoppedAt ? new Date(r.stoppedAt) : undefined,
+      expiresAt: r.expiresAt ? new Date(r.expiresAt) : undefined,
+    })))
+
+    MOCK_PRE_AUTHORIZATIONS.length = 0
+    MOCK_PRE_AUTHORIZATIONS.push(...JSON.parse(INITIAL_PRE_AUTHORIZATIONS).map((p: any) => ({
+      ...p,
+      grantedAt: p.grantedAt ? new Date(p.grantedAt) : undefined,
+      revokedAt: p.revokedAt ? new Date(p.revokedAt) : undefined,
+      updatedAt: p.updatedAt ? new Date(p.updatedAt) : new Date(),
+    })))
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('worktrack_screen_requests')
+      localStorage.removeItem('worktrack_pre_authorizations')
+    }
   },
 
   // Sessions
   getSessions: async (employeeId?: string): Promise<WorkSession[]> => {
-    await delay(300)
+    await delay(150)
     return employeeId
       ? MOCK_SESSIONS.filter(s => s.employeeId === employeeId)
       : [...MOCK_SESSIONS]
   },
 
   getActiveSessions: async (): Promise<WorkSession[]> => {
-    await delay(200)
-    return MOCK_SESSIONS.filter(s => s.status === 'active')
+    await delay(100)
+    return MOCK_SESSIONS.filter(s => s.status === 'working' || s.status === 'on_break' || s.status === 'active' || s.status === 'paused')
   },
 
   // Screenshots
@@ -272,19 +723,388 @@ export const dataService = {
     return { ...MOCK_SETTINGS, ...settings, updatedAt: new Date() }
   },
 
-  // Screen View Requests
-  requestScreenView: async (employeeId: string, deviceId: string): Promise<ScreenViewRequest> => {
-    await delay(500)
-    return {
-      id: `req_${Date.now()}`,
+  // Screen View Requests (Phase 6 Monitoring Permissions)
+  getScreenViewRequests: async (): Promise<ScreenViewRequest[]> => {
+    await delay(150)
+    // Sync with localStorage if present
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('worktrack_screen_requests') : null
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((r: any) => ({
+            ...r,
+            requestedAt: new Date(r.requestedAt),
+            respondedAt: r.respondedAt ? new Date(r.respondedAt) : undefined,
+            endedAt: r.endedAt ? new Date(r.endedAt) : undefined,
+            stoppedAt: r.stoppedAt ? new Date(r.stoppedAt) : undefined,
+            expiresAt: r.expiresAt ? new Date(r.expiresAt) : undefined,
+          }))
+        }
+      } catch {
+        // use memory array
+      }
+    }
+    return [...MOCK_SCREEN_VIEW_REQUESTS]
+  },
+
+  getScreenViewRequest: async (id: string): Promise<ScreenViewRequest | null> => {
+    await delay(100)
+    const all = await dataService.getScreenViewRequests()
+    return all.find(r => r.id === id) || null
+  },
+
+  getScreenViewRequestByDevice: async (deviceId: string): Promise<ScreenViewRequest | null> => {
+    await delay(100)
+    const all = await dataService.getScreenViewRequests()
+    return all.find(r => r.deviceId === deviceId) || null
+  },
+
+  requestScreenView: async (
+    employeeId: string,
+    deviceId: string,
+    options?: { expiresInSeconds?: number; adminName?: string; timestamp?: Date }
+  ): Promise<ScreenViewRequest> => {
+    await delay(200)
+
+    // 1. Verify device registration state
+    const reg = await dataService.getDeviceRegistration(deviceId)
+    if (!reg || reg.status !== 'approved') {
+      const currentStatus = reg ? reg.status : 'not_registered'
+      throw new Error(
+        `Cannot request live view: Device must be approved before requesting monitoring permission (current status: "${currentStatus}").`
+      )
+    }
+
+    // 2. Check for duplicate pending or approved request
+    const all = await dataService.getScreenViewRequests()
+    const activeExisting = all.find(
+      r => r.deviceId === deviceId && (r.status === 'pending' || r.status === 'approved' || r.status === 'active')
+    )
+    if (activeExisting) {
+      throw new Error(`Duplicate request rejected: A monitoring request for device "${deviceId}" is already ${activeExisting.status}.`)
+    }
+
+    const emp = await dataService.getEmployee(employeeId)
+    const now = options?.timestamp ? new Date(options.timestamp) : new Date()
+    const expiresInSec = options?.expiresInSeconds || 60
+    const expiresAt = new Date(now.getTime() + expiresInSec * 1000)
+
+    const cryptoObj = typeof window !== 'undefined' ? (window.crypto || (window as any).msCrypto) : null
+    const uuid = cryptoObj && cryptoObj.randomUUID
+      ? cryptoObj.randomUUID()
+      : `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+
+    const newReq: ScreenViewRequest = {
+      id: `req_${uuid}`,
       adminId: 'admin_001',
+      adminName: options?.adminName || 'Security Admin',
       employeeId,
+      employeeName: emp?.name || reg.employeeName,
       deviceId,
+      deviceName: reg.deviceName,
       status: 'pending',
-      requestedAt: new Date(),
-      expiresAt: new Date(Date.now() + 30_000),
+      requestedAt: now,
+      expiresAt,
       requiresEmployeeApproval: true,
     }
+
+    MOCK_SCREEN_VIEW_REQUESTS.unshift(newReq)
+
+    // Sync to localStorage
+    if (typeof localStorage !== 'undefined') {
+      const existingRaw = localStorage.getItem('worktrack_screen_requests')
+      const existingList = existingRaw ? JSON.parse(existingRaw) : []
+      const serialized = {
+        ...newReq,
+        requestedAt: newReq.requestedAt.toISOString(),
+        expiresAt: newReq.expiresAt ? newReq.expiresAt.toISOString() : undefined,
+      }
+      localStorage.setItem('worktrack_screen_requests', JSON.stringify([serialized, ...existingList]))
+    }
+
+    return { ...newReq }
+  },
+
+  cancelScreenViewRequest: async (requestId: string): Promise<ScreenViewRequest> => {
+    await delay(150)
+    const all = await dataService.getScreenViewRequests()
+    const req = all.find(r => r.id === requestId)
+    if (!req) {
+      throw new Error(`Screen view request "${requestId}" not found.`)
+    }
+    if (req.status !== 'pending') {
+      throw new Error(`Invalid state transition: Cannot cancel request in status "${req.status}". Only pending requests can be cancelled.`)
+    }
+
+    req.status = 'cancelled'
+    req.endedAt = new Date()
+
+    // Update in-memory and storage
+    const inMem = MOCK_SCREEN_VIEW_REQUESTS.find(r => r.id === requestId)
+    if (inMem) {
+      inMem.status = 'cancelled'
+      inMem.endedAt = req.endedAt
+    }
+
+    if (typeof localStorage !== 'undefined') {
+      const updated = all.map(r => (r.id === requestId ? req : r))
+      localStorage.setItem('worktrack_screen_requests', JSON.stringify(updated))
+    }
+
+    return { ...req }
+  },
+
+  stopScreenView: async (requestId: string, stoppedBy: 'admin' | 'employee' = 'admin'): Promise<ScreenViewRequest> => {
+    await delay(150)
+    const all = await dataService.getScreenViewRequests()
+    const req = all.find(r => r.id === requestId)
+    if (!req) {
+      throw new Error(`Screen view request "${requestId}" not found.`)
+    }
+    if (req.status !== 'approved' && req.status !== 'active') {
+      throw new Error(`Invalid state transition: Cannot stop view in status "${req.status}". Must be approved.`)
+    }
+
+    req.status = 'stopped'
+    req.stoppedAt = new Date()
+    req.endedAt = new Date()
+    req.stoppedBy = stoppedBy
+
+    const inMem = MOCK_SCREEN_VIEW_REQUESTS.find(r => r.id === requestId)
+    if (inMem) {
+      inMem.status = 'stopped'
+      inMem.stoppedAt = req.stoppedAt
+      inMem.endedAt = req.endedAt
+      inMem.stoppedBy = stoppedBy
+    }
+
+    if (typeof localStorage !== 'undefined') {
+      const updated = all.map(r => (r.id === requestId ? req : r))
+      localStorage.setItem('worktrack_screen_requests', JSON.stringify(updated))
+    }
+
+    return { ...req }
+  },
+
+  // Pre-Authorization Policies & One-Click Live View
+  getPreAuthorizations: async (): Promise<PreAuthorizationRecord[]> => {
+    await delay(100)
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem('worktrack_pre_authorizations')
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw)
+          if (Array.isArray(parsed)) {
+            return parsed.map((item: any) => ({
+              ...item,
+              grantedAt: item.grantedAt ? new Date(item.grantedAt) : undefined,
+              revokedAt: item.revokedAt ? new Date(item.revokedAt) : undefined,
+              updatedAt: item.updatedAt ? new Date(item.updatedAt) : new Date(),
+            }))
+          }
+        } catch {}
+      }
+    }
+    return [...MOCK_PRE_AUTHORIZATIONS]
+  },
+
+  getPreAuthorization: async (deviceId: string): Promise<PreAuthorizationRecord | null> => {
+    const all = await dataService.getPreAuthorizations()
+    return all.find(r => r.deviceId === deviceId) || null
+  },
+
+  grantPreAuthorization: async (payload: {
+    employeeId: string
+    employeeName?: string
+    deviceId: string
+    deviceName?: string
+    adminName?: string
+    policyVersion?: string
+    timestamp?: Date
+  }): Promise<PreAuthorizationRecord> => {
+    await delay(150)
+    const reg = await dataService.getDeviceRegistration(payload.deviceId)
+    if (!reg || reg.status !== 'approved') {
+      const status = reg ? reg.status : 'not_registered'
+      throw new Error(
+        `Cannot grant pre-authorization: Device registration status is "${status}". Only approved devices can grant monitoring authorization.`
+      )
+    }
+
+    const now = payload.timestamp ? new Date(payload.timestamp) : new Date()
+    const all = await dataService.getPreAuthorizations()
+    const existingIndex = all.findIndex(r => r.deviceId === payload.deviceId)
+    const rec: PreAuthorizationRecord = {
+      id: existingIndex >= 0 ? all[existingIndex].id : `auth_${payload.deviceId}`,
+      employeeId: payload.employeeId,
+      employeeName: payload.employeeName || reg.employeeName,
+      deviceId: payload.deviceId,
+      deviceName: payload.deviceName || reg.deviceName,
+      status: 'granted',
+      policyVersion: payload.policyVersion || CURRENT_PRE_AUTH_POLICY.version,
+      grantedAt: now,
+      grantedByAdminName: payload.adminName || 'Security Admin',
+      revokedAt: undefined,
+      revokedBy: undefined,
+      revocationReason: undefined,
+      updatedAt: now,
+    }
+
+    if (existingIndex >= 0) {
+      all[existingIndex] = rec
+    } else {
+      all.unshift(rec)
+    }
+
+    const inMemIdx = MOCK_PRE_AUTHORIZATIONS.findIndex(r => r.deviceId === payload.deviceId)
+    if (inMemIdx >= 0) {
+      MOCK_PRE_AUTHORIZATIONS[inMemIdx] = rec
+    } else {
+      MOCK_PRE_AUTHORIZATIONS.unshift(rec)
+    }
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('worktrack_pre_authorizations', JSON.stringify(all))
+    }
+
+    return { ...rec }
+  },
+
+  revokePreAuthorization: async (
+    deviceId: string,
+    revokedBy: 'admin' | 'employee' = 'admin',
+    reason?: string,
+    timestamp?: Date
+  ): Promise<PreAuthorizationRecord> => {
+    await delay(150)
+    const now = timestamp ? new Date(timestamp) : new Date()
+    const all = await dataService.getPreAuthorizations()
+    let rec = all.find(r => r.deviceId === deviceId)
+
+    if (!rec) {
+      rec = {
+        id: `auth_${deviceId}`,
+        employeeId: '',
+        deviceId,
+        status: 'revoked',
+        policyVersion: CURRENT_PRE_AUTH_POLICY.version,
+        revokedAt: now,
+        revokedBy,
+        revocationReason: reason,
+        updatedAt: now,
+      }
+      all.unshift(rec)
+    } else {
+      rec.status = 'revoked'
+      rec.revokedAt = now
+      rec.revokedBy = revokedBy
+      rec.revocationReason = reason
+      rec.updatedAt = now
+    }
+
+    const inMem = MOCK_PRE_AUTHORIZATIONS.find(r => r.deviceId === deviceId)
+    if (inMem) {
+      inMem.status = 'revoked'
+      inMem.revokedAt = now
+      inMem.revokedBy = revokedBy
+      inMem.revocationReason = reason
+      inMem.updatedAt = now
+    } else {
+      MOCK_PRE_AUTHORIZATIONS.unshift({ ...rec })
+    }
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('worktrack_pre_authorizations', JSON.stringify(all))
+    }
+
+    // Terminate any active screen view session for this device
+    const activeReq = (await dataService.getScreenViewRequests()).find(
+      r => r.deviceId === deviceId && (r.status === 'approved' || r.status === 'active')
+    )
+    if (activeReq) {
+      await dataService.stopScreenView(activeReq.id, revokedBy)
+    }
+
+    return { ...rec }
+  },
+
+  startPreAuthorizedSession: async (
+    employeeId: string,
+    deviceId: string,
+    options?: { adminName?: string; timestamp?: Date }
+  ): Promise<ScreenViewRequest> => {
+    await delay(200)
+
+    // 1. Verify device registration state
+    const reg = await dataService.getDeviceRegistration(deviceId)
+    if (!reg || reg.status !== 'approved') {
+      const currentStatus = reg ? reg.status : 'not_registered'
+      throw new Error(
+        `Cannot start viewing session: Device registration is "${currentStatus}". Only approved devices are eligible for live monitoring.`
+      )
+    }
+
+    // 2. Check pre-authorization policy status
+    const auth = await dataService.getPreAuthorization(deviceId)
+    if (!auth || auth.status !== 'granted') {
+      const authStatus = auth ? auth.status : 'not_configured'
+      throw new Error(
+        `Pre-authorized viewing blocked: Employee has not granted active monitoring authorization (status: "${authStatus}").`
+      )
+    }
+
+    // 3. Prevent duplicate active sessions
+    const all = await dataService.getScreenViewRequests()
+    const activeExisting = all.find(
+      r => r.deviceId === deviceId && (r.status === 'approved' || r.status === 'active' || r.status === 'pending')
+    )
+    if (activeExisting) {
+      throw new Error(
+        `Duplicate session rejected: A screen viewing session for device "${deviceId}" is already active (Session: ${activeExisting.id}).`
+      )
+    }
+
+    const emp = await dataService.getEmployee(employeeId)
+    const now = options?.timestamp ? new Date(options.timestamp) : new Date()
+
+    const cryptoObj = typeof window !== 'undefined' ? (window.crypto || (window as any).msCrypto) : null
+    const uuid = cryptoObj && cryptoObj.randomUUID
+      ? cryptoObj.randomUUID()
+      : `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+
+    const newReq: ScreenViewRequest = {
+      id: `req_oneclick_${uuid}`,
+      adminId: 'admin_001',
+      adminName: options?.adminName || 'Security Admin',
+      employeeId,
+      employeeName: emp?.name || reg.employeeName,
+      deviceId,
+      deviceName: reg.deviceName,
+      status: 'approved',
+      isPreAuthorized: true,
+      authorizationPolicyVersion: auth.policyVersion,
+      requiresEmployeeApproval: false,
+      requestedAt: now,
+      respondedAt: now,
+    }
+
+    MOCK_SCREEN_VIEW_REQUESTS.unshift(newReq)
+
+    // Sync to localStorage
+    if (typeof localStorage !== 'undefined') {
+      const existingRaw = localStorage.getItem('worktrack_screen_requests')
+      const existingList = existingRaw ? JSON.parse(existingRaw) : []
+      const serialized = {
+        ...newReq,
+        requestedAt: newReq.requestedAt.toISOString(),
+        respondedAt: newReq.respondedAt ? newReq.respondedAt.toISOString() : undefined,
+        expiresAt: newReq.expiresAt ? newReq.expiresAt.toISOString() : undefined,
+      }
+      localStorage.setItem('worktrack_screen_requests', JSON.stringify([serialized, ...existingList]))
+    }
+
+    return { ...newReq }
   },
 
   // Summaries (for reports)

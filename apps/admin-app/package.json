@@ -2,6 +2,7 @@
   "name": "@worktrack-pro/admin-app",
   "version": "1.0.0",
   "description": "WorkTrack Pro — Admin Desktop Application",
+  "author": "WorkTrack Pro Team",
   "private": true,
   "main": "electron/main.js",
   "scripts": {

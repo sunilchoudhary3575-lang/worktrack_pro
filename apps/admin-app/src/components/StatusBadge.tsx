@@ -1,18 +1,21 @@
-import type { DeviceStatus } from '@worktrack-pro/shared'
+import type { DeviceStatus, SessionStatus } from '@worktrack-pro/shared'
 
 interface Props {
-  status: DeviceStatus | 'active' | 'ended' | 'paused'
+  status: DeviceStatus | SessionStatus
   showLabel?: boolean
   size?: 'sm' | 'md'
 }
 
 const CONFIG = {
-  online:  { dot: 'status-dot-online',  label: 'Online',  text: 'text-success-400' },
-  active:  { dot: 'status-dot-online',  label: 'Active',  text: 'text-success-400' },
-  idle:    { dot: 'status-dot-idle',    label: 'Idle',    text: 'text-warning-400' },
-  paused:  { dot: 'status-dot-idle',    label: 'Paused',  text: 'text-warning-400' },
-  offline: { dot: 'status-dot-offline', label: 'Offline', text: 'text-white/30' },
-  ended:   { dot: 'status-dot-offline', label: 'Ended',   text: 'text-white/30' },
+  online:      { dot: 'status-dot-online',  label: 'Online',      text: 'text-success-400' },
+  active:      { dot: 'status-dot-online',  label: 'Active',      text: 'text-success-400' },
+  working:     { dot: 'status-dot-online',  label: 'Working',     text: 'text-success-400' },
+  idle:        { dot: 'status-dot-idle',    label: 'Idle',        text: 'text-warning-400' },
+  paused:      { dot: 'status-dot-idle',    label: 'Paused',      text: 'text-warning-400' },
+  on_break:    { dot: 'status-dot-idle',    label: 'On Break',    text: 'text-warning-400' },
+  offline:     { dot: 'status-dot-offline', label: 'Offline',     text: 'text-white/30' },
+  ended:       { dot: 'status-dot-offline', label: 'Ended',       text: 'text-white/30' },
+  not_started: { dot: 'status-dot-offline', label: 'Not Started', text: 'text-white/30' },
 } as const
 
 export default function StatusBadge({ status, showLabel = true, size = 'sm' }: Props) {

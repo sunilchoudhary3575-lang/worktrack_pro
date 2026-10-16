@@ -1,13 +1,14 @@
 {
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   "appId": "com.worktrackpro.employee",
-  "productName": "WorkTrackPro",
+  "productName": "WorkTrack Pro Employee",
+  "electronVersion": "28.2.0",
   "artifactName": "WorkTrackPro-Employee-Setup.exe",
   "directories": {
-    "output": "dist",
+    "output": "release",
     "buildResources": "build"
   },
   "files": [
-    "dist-electron/**/*",
     "dist/**/*",
     "electron/**/*",
     "package.json"
@@ -16,10 +17,12 @@
     "target": [
       {
         "target": "nsis",
-        "arch": ["x64"]
+        "arch": [
+          "x64"
+        ]
       }
     ],
-    "icon": "build/icon.ico"
+    "signAndEditExecutable": false
   },
   "nsis": {
     "oneClick": false,
@@ -27,9 +30,11 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "WorkTrackPro"
+    "shortcutName": "WorkTrack Pro Employee",
+    "uninstallDisplayName": "WorkTrack Pro Employee",
+    "deleteAppDataOnUninstall": false
   },
   "extraMetadata": {
-    "main": "dist-electron/main.js"
+    "main": "electron/main.js"
   }
 }

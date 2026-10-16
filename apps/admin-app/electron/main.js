@@ -3,6 +3,8 @@ const path = require('path')
 
 const isDev = process.env.NODE_ENV === 'development'
 
+app.name = 'WorkTrack Pro Admin'
+
 /** @type {BrowserWindow | null} */
 let mainWindow = null
 
