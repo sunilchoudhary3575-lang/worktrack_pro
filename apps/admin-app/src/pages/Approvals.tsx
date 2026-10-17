@@ -20,7 +20,7 @@ import {
   Loader2,
   Info,
 } from 'lucide-react'
-import { dataService } from '../services/dataService'
+import { dataService, isLiveFirestoreActive } from '../services/dataService'
 import type {
   DeviceRegistrationRecord,
   DeviceRegistrationStatus,
@@ -44,6 +44,7 @@ const TYPE_COLORS: Record<ApprovalType, string> = {
 
 export default function Approvals() {
   const [activeTab, setActiveTab] = useState<'devices' | 'alerts'>('devices')
+  const [isLive, setIsLive] = useState(false)
   const [deviceRegistrations, setDeviceRegistrations] = useState<DeviceRegistrationRecord[]>([])
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([])
 
@@ -65,6 +66,7 @@ export default function Approvals() {
   }, [])
 
   const loadData = async () => {
+    setIsLive(isLiveFirestoreActive())
     try {
       const [regs, reqs] = await Promise.all([
         dataService.getDeviceRegistrations(),
@@ -256,13 +258,28 @@ export default function Approvals() {
         <div className="flex items-center gap-2">
           <Info className="w-4 h-4 text-brand-400 flex-shrink-0" />
           <span>
-            <strong>Phase 5 Architecture:</strong> Approval actions update the Admin App local mock dataset. Cross-machine synchronization will be enabled in Firebase phases.
+            {isLive ? (
+              <>
+                <strong>Live Firestore Directory:</strong> Device registrations and approvals synchronize directly with cloud database.
+              </>
+            ) : (
+              <>
+                <strong>Demo Architecture:</strong> Approval actions update the Admin App local mock dataset.
+              </>
+            )}
           </span>
         </div>
-        <span className="mock-banner text-[10px]">
-          <span className="w-1.5 h-1.5 rounded-full bg-warning-400 animate-pulse" />
-          Mock Data Active
-        </span>
+        {isLive ? (
+          <span className="live-banner text-[10px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            Live Approvals Active
+          </span>
+        ) : (
+          <span className="mock-banner text-[10px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-warning-400" />
+            Mock Data Active
+          </span>
+        )}
       </div>
 
       {/* ── Global Error Alert Banner ────────────────────────── */}

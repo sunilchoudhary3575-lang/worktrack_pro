@@ -14,8 +14,25 @@ import type {
   WebUsage,
   ActivityMetric,
   ApprovalRequest,
+  ProvisionEmployeePayload,
+  ProvisionEmployeeResult,
 } from '@worktrack-pro/shared'
-import { CURRENT_PRE_AUTH_POLICY } from '@worktrack-pro/shared'
+import {
+  CURRENT_PRE_AUTH_POLICY,
+  normalizeEmployeeId,
+  formatEmployeeAuthEmail,
+  validatePasswordStrength,
+} from '@worktrack-pro/shared'
+import { isFirebaseConfigured, getFirebaseInstance } from './firebaseAuth'
+import { firestoreDataService } from './firestoreDataService'
+
+export function isLiveFirestoreActive(): boolean {
+  if (typeof window === 'undefined') return false
+  if (localStorage.getItem('worktrack_admin_demo_session')) return false
+  if (!isFirebaseConfigured()) return false
+  const { auth } = getFirebaseInstance()
+  return !!auth?.currentUser
+}
 
 // ─── Mock Data ───────────────────────────────────────────────
 // ⚠️  ALL DATA BELOW IS MOCK DATA FOR DEVELOPMENT ONLY.
@@ -413,11 +430,17 @@ const INITIAL_PRE_AUTHORIZATIONS = JSON.stringify(MOCK_PRE_AUTHORIZATIONS)
 export const dataService = {
   // Employees
   getEmployees: async (): Promise<Employee[]> => {
+    if (isLiveFirestoreActive()) {
+      return firestoreDataService.getEmployees()
+    }
     await delay(150)
     return [...MOCK_EMPLOYEES]
   },
 
   getEmployee: async (id: string): Promise<Employee | null> => {
+    if (isLiveFirestoreActive()) {
+      return firestoreDataService.getEmployee(id)
+    }
     await delay(100)
     return MOCK_EMPLOYEES.find(e => e.id === id) ?? null
   },
@@ -429,6 +452,9 @@ export const dataService = {
     role?: EmployeeRole
     department?: string
   }): Promise<Employee> => {
+    if (isLiveFirestoreActive()) {
+      return firestoreDataService.createEmployee(data)
+    }
     await delay(150)
     const trimmedId = data.id?.trim()
     const trimmedName = data.name?.trim()
@@ -459,6 +485,49 @@ export const dataService = {
     return { ...newEmp }
   },
 
+  provisionEmployee: async (payload: ProvisionEmployeePayload): Promise<ProvisionEmployeeResult> => {
+    if (isLiveFirestoreActive()) {
+      return firestoreDataService.provisionEmployee(payload)
+    }
+
+    // Offline Demo / Mock Mode implementation
+    await delay(300)
+    const normalized = normalizeEmployeeId(payload.employeeId)
+    const existing = MOCK_EMPLOYEES.find(e => e.id.toLowerCase() === normalized)
+    if (existing) {
+      throw new Error(`Duplicate Employee ID: An employee with ID "${normalized}" already exists.`)
+    }
+
+    const passwordCheck = validatePasswordStrength(payload.initialPassword)
+    if (!passwordCheck.valid) {
+      throw new Error(`Invalid password: ${passwordCheck.errors.join(' ')}`)
+    }
+
+    const mockUid = `demo_uid_${normalized}`
+    const syntheticEmail = formatEmployeeAuthEmail(normalized)
+    const newEmp: Employee = {
+      id: normalized,
+      name: payload.name.trim(),
+      email: payload.contactEmail.trim(),
+      role: 'employee',
+      department: payload.department.trim(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
+    MOCK_EMPLOYEES.push(newEmp)
+
+    return {
+      success: true,
+      uid: mockUid,
+      employeeId: normalized,
+      authEmail: syntheticEmail,
+      contactEmail: payload.contactEmail.trim().toLowerCase(),
+      name: payload.name.trim(),
+      role: 'employee',
+      department: payload.department.trim(),
+    }
+  },
+
   updateEmployee: async (
     id: string,
     updates: {
@@ -468,6 +537,11 @@ export const dataService = {
       department?: string
     }
   ): Promise<Employee> => {
+    if (isLiveFirestoreActive()) {
+      const updated = await firestoreDataService.updateEmployee(id, updates)
+      if (!updated) throw new Error(`Employee with ID "${id}" not found.`)
+      return updated
+    }
     await delay(150)
     const emp = MOCK_EMPLOYEES.find(e => e.id === id)
     if (!emp) {
@@ -497,22 +571,36 @@ export const dataService = {
 
   // Devices
   getDevices: async (): Promise<Device[]> => {
+    if (isLiveFirestoreActive()) {
+      return firestoreDataService.getDevices()
+    }
     await delay(150)
     return [...MOCK_DEVICES]
   },
 
   getDevicesByEmployee: async (employeeId: string): Promise<Device[]> => {
+    if (isLiveFirestoreActive()) {
+      const all = await firestoreDataService.getDevices()
+      return all.filter(d => d.employeeId === employeeId)
+    }
     await delay(100)
     return MOCK_DEVICES.filter(d => d.employeeId === employeeId)
   },
 
   getDeviceByEmployee: async (employeeId: string): Promise<Device | null> => {
+    if (isLiveFirestoreActive()) {
+      const all = await firestoreDataService.getDevices()
+      return all.find(d => d.employeeId === employeeId) ?? null
+    }
     await delay(100)
     return MOCK_DEVICES.find(d => d.employeeId === employeeId) ?? null
   },
 
   // Device Registrations
   getDeviceRegistrations: async (): Promise<DeviceRegistrationRecord[]> => {
+    if (isLiveFirestoreActive()) {
+      return firestoreDataService.getDeviceRegistrations()
+    }
     await delay(150)
     const list = [...MOCK_DEVICE_REGISTRATIONS]
     if (typeof localStorage !== 'undefined') {
@@ -561,6 +649,13 @@ export const dataService = {
   },
 
   approveDeviceRegistration: async (deviceId: string, reviewedBy = 'Admin User'): Promise<DeviceRegistrationRecord> => {
+    if (isLiveFirestoreActive()) {
+      const res = await firestoreDataService.approveDeviceRegistration(deviceId, reviewedBy)
+      if (!res) {
+        throw new Error(`Device registration record not found for device: "${deviceId}".`)
+      }
+      return res
+    }
     await delay(150)
     const rec = MOCK_DEVICE_REGISTRATIONS.find(r => r.deviceId === deviceId)
     if (!rec) {
@@ -691,6 +786,10 @@ export const dataService = {
 
   // Sessions
   getSessions: async (employeeId?: string): Promise<WorkSession[]> => {
+    if (isLiveFirestoreActive()) {
+      const all = await firestoreDataService.getSessions()
+      return employeeId ? all.filter(s => s.employeeId === employeeId) : all
+    }
     await delay(150)
     return employeeId
       ? MOCK_SESSIONS.filter(s => s.employeeId === employeeId)
@@ -698,12 +797,19 @@ export const dataService = {
   },
 
   getActiveSessions: async (): Promise<WorkSession[]> => {
+    if (isLiveFirestoreActive()) {
+      return firestoreDataService.getActiveSessions()
+    }
     await delay(100)
     return MOCK_SESSIONS.filter(s => s.status === 'working' || s.status === 'on_break' || s.status === 'active' || s.status === 'paused')
   },
 
   // Screenshots
   getScreenshots: async (filters?: { employeeId?: string; date?: string }): Promise<Screenshot[]> => {
+    if (isLiveFirestoreActive()) {
+      const all = await firestoreDataService.getScreenshots()
+      return filters?.employeeId ? all.filter(s => s.employeeId === filters.employeeId) : all
+    }
     await delay(400)
     let results = [...MOCK_SCREENSHOTS]
     if (filters?.employeeId) {
@@ -1133,6 +1239,9 @@ export const dataService = {
 
   // Approval queue
   getApprovalRequests: async (): Promise<ApprovalRequest[]> => {
+    if (isLiveFirestoreActive()) {
+      return firestoreDataService.getApprovalRequests()
+    }
     await delay(200)
     return [...MOCK_APPROVAL_REQUESTS]
   },

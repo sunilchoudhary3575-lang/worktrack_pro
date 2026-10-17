@@ -136,6 +136,12 @@
     @apply flex items-center gap-2 px-3 py-1.5 rounded-lg bg-warning-500/10 border border-warning-500/20
            text-warning-400 text-xs font-medium;
   }
+
+  /* Live data banner */
+  .live-banner {
+    @apply flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20
+           text-emerald-400 text-xs font-medium;
+  }
 }
 
 /* Titlebar drag region for frameless window */

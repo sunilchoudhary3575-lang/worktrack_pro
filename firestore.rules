@@ -1,0 +1,171 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ─── Default Security Posture: Deny all by default ───
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ─── Security Helper Functions ───
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Verified Admin role: checked via Firebase Auth token custom claim or Firestore user doc
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'admin' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         getUserData().role == 'admin')
+      );
+    }
+
+    // ─── 1. Users Collection (/users/{userId}) ───
+    // Document ID MUST be the Firebase Auth UID
+    match /users/{userId} {
+      // Read: Users can inspect their own profile. Only Admins can inspect all user profiles.
+      allow read: if isOwner(userId) || isAdmin();
+
+      // Create:
+      // - Authenticated users may provision their initial profile document matching their auth UID.
+      // - SECURITY INVARIANT: Users CANNOT self-assign the 'admin' role.
+      // - Admins can create any user profile.
+      allow create: if (
+        isOwner(userId) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.role != 'admin'
+      ) || isAdmin();
+
+      // Update:
+      // - Users can update non-privileged personal information (e.g. displayName, lastLoginAt).
+      // - SECURITY INVARIANT: Users CANNOT alter their assigned 'role' or their 'uid'.
+      // - Admins can update any profile, including changing roles.
+      allow update: if (
+        isOwner(userId) &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.uid == resource.data.uid
+      ) || isAdmin();
+
+      // Delete: Strictly Admin only
+      allow delete: if isAdmin();
+    }
+
+    // ─── 2. Employees Collection (/employees/{employeeId}) ───
+    // Document ID is the Employee corporate ID (e.g. emp_001)
+    match /employees/{employeeId} {
+      // Read:
+      // - Admins can view all corporate employee records.
+      // - Employees can read ONLY their own record linked by userId. Cross-employee browsing is blocked.
+      allow read: if isAdmin() || (
+        isAuthenticated() && resource.data.userId == request.auth.uid
+      );
+
+      // Write (Create, Update, Delete):
+      // Corporate employee directory management is strictly restricted to Admins.
+      // Standard employees CANNOT add, modify, or remove employee records.
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ─── 3. Devices Collection (/devices/{deviceId}) ───
+    // Document ID is the unique Device Hardware ID
+    match /devices/{deviceId} {
+      // Read:
+      // - Admins can view all devices across the enterprise.
+      // - Employees can view ONLY devices registered to their own userId.
+      allow read: if isAdmin() || (
+        isAuthenticated() && resource.data.userId == request.auth.uid
+      );
+
+      // Create:
+      // - Authenticated employees can submit their device registration request.
+      // - SECURITY INVARIANTS:
+      //   1. Must link to their own Firebase Auth UID.
+      //   2. Device initial approvalStatus MUST be 'pending' or 'pending_approval'.
+      //   3. Employees CANNOT register a pre-approved device.
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.approvalStatus in ['pending', 'pending_approval'];
+
+      // Update:
+      // - Admins can modify any device attribute (including approvalStatus to 'approved' or 'rejected').
+      // - Employees can update hardware telemetry (e.g. hostname, lastSeen, osVersion),
+      //   but CANNOT change approvalStatus, userId, or deviceId.
+      allow update: if isAdmin() || (
+        isAuthenticated() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.approvalStatus == resource.data.approvalStatus &&
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data.deviceId == resource.data.deviceId
+      );
+
+      // Delete: Strictly Admin only
+      allow delete: if isAdmin();
+    }
+
+    // ─── 4. Device Approvals Collection (/device_approvals/{approvalId}) ───
+    // Audit log and approval state machine
+    match /device_approvals/{approvalId} {
+      // Read:
+      // - Admins can review all approval history.
+      // - Employees can read approval status for devices belonging to their own userId.
+      allow read: if isAdmin() || (
+        isAuthenticated() && resource.data.userId == request.auth.uid
+      );
+
+      // Write (Create, Update, Delete):
+      // SECURITY INVARIANT: Strictly Admin only.
+      // Employees CANNOT approve or reject their own or any other device.
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ─── 5. Work Sessions Collection (/work_sessions/{sessionId}) ───
+    match /work_sessions/{sessionId} {
+      // Read: Admins can inspect all sessions across the enterprise.
+      // Employees can read only their own sessions.
+      allow read: if isAdmin() || (
+        isAuthenticated() && resource.data.userId == request.auth.uid
+      );
+
+      // Write:
+      // - Admins have full management access.
+      // - Authenticated employees can record their own sessions (clock in, pauses, clock out).
+      allow create, update: if isAdmin() || (
+        isAuthenticated() && request.resource.data.userId == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ─── 6. Screenshots Collection (/screenshots/{screenshotId}) ───
+    match /screenshots/{screenshotId} {
+      // Read: Admins can view all captured screenshots.
+      // Employees can view only screenshots captured on their own authorized sessions.
+      allow read: if isAdmin() || (
+        isAuthenticated() && resource.data.userId == request.auth.uid
+      );
+
+      // Create: Employees can store screenshots during active monitoring sessions; Admins can store.
+      allow create: if isAdmin() || (
+        isAuthenticated() && request.resource.data.userId == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ─── 7. Policy Settings Collection (/settings/{settingsId}) ───
+    match /settings/{settingsId} {
+      // Read: All authenticated users can read organizational monitoring policy.
+      allow read: if isAuthenticated();
+
+      // Write: Strictly Admin only.
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}

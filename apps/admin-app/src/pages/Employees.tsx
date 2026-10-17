@@ -6,12 +6,14 @@ import {
   Activity,
   Edit2,
   Eye,
+  EyeOff,
   Filter,
   CheckCircle2,
   XCircle,
   Clock,
   Building2,
   Shield,
+  ShieldCheck,
   Laptop,
   Coffee,
   Calendar,
@@ -23,8 +25,12 @@ import {
   Check,
   ChevronRight,
   Info,
+  Copy,
+  CheckCheck,
+  Key,
+  RefreshCw,
 } from 'lucide-react'
-import { dataService } from '../services/dataService'
+import { dataService, isLiveFirestoreActive } from '../services/dataService'
 import { SkeletonTable } from '../components/Skeleton'
 import StatusBadge from '../components/StatusBadge'
 import type {
@@ -35,6 +41,11 @@ import type {
   DeviceRegistrationStatus,
   WorkSession,
   EmployeeBreak,
+} from '@worktrack-pro/shared'
+import {
+  generateSecurePassword,
+  validatePasswordStrength,
+  validateEmployeeId,
 } from '@worktrack-pro/shared'
 
 const DEPARTMENTS = [
@@ -52,6 +63,7 @@ const ROLES: EmployeeRole[] = ['employee', 'manager', 'admin']
 
 export default function Employees() {
   const [loading, setLoading] = useState(true)
+  const [isLive, setIsLive] = useState(false)
   const [employees, setEmployees] = useState<Employee[]>([])
   const [devices, setDevices] = useState<Device[]>([])
   const [registrations, setRegistrations] = useState<DeviceRegistrationRecord[]>([])
@@ -75,8 +87,19 @@ export default function Employees() {
   const [formEmail, setFormEmail] = useState('')
   const [formDept, setFormDept] = useState('Engineering')
   const [formRole, setFormRole] = useState<EmployeeRole>('employee')
+  const [formPassword, setFormPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [formSubmitting, setFormSubmitting] = useState(false)
+
+  // One-time credential dialog state (wiped on close)
+  const [oneTimeCredentials, setOneTimeCredentials] = useState<{
+    employeeId: string
+    password: string
+    uid: string
+    name: string
+  } | null>(null)
+  const [copiedField, setCopiedField] = useState<'id' | 'password' | 'all' | null>(null)
 
   // Feedback notifications
   const [toastMessage, setToastMessage] = useState<string | null>(null)
@@ -87,6 +110,7 @@ export default function Employees() {
 
   const loadData = async () => {
     setLoading(true)
+    setIsLive(isLiveFirestoreActive())
     try {
       const [emps, devs, regs, sess] = await Promise.all([
         dataService.getEmployees(),
@@ -181,6 +205,8 @@ export default function Employees() {
     setFormEmail('')
     setFormDept('Engineering')
     setFormRole('employee')
+    setFormPassword(generateSecurePassword(16))
+    setShowPassword(false)
     setFormError(null)
     setShowAddEditModal(true)
   }
@@ -193,6 +219,7 @@ export default function Employees() {
     setFormEmail(emp.email)
     setFormDept(emp.department || 'Engineering')
     setFormRole(emp.role)
+    setFormPassword('')
     setFormError(null)
     setShowAddEditModal(true)
   }
@@ -201,31 +228,58 @@ export default function Employees() {
     e.preventDefault()
     setFormError(null)
 
-    if (!formId.trim()) {
-      setFormError('Employee ID is required.')
+    const idValidation = validateEmployeeId(formId)
+    if (!idValidation.valid || !idValidation.normalized) {
+      setFormError(
+        idValidation.error ||
+          'Invalid Employee ID format. Must be 3–32 characters (letters, numbers, hyphens, underscores).'
+      )
       return
     }
+
     if (!formName.trim()) {
       setFormError('Employee Full Name is required.')
       return
     }
     if (!formEmail.trim() || !formEmail.includes('@') || !formEmail.includes('.')) {
-      setFormError('Please enter a valid email address.')
+      setFormError('Please enter a valid corporate or personal contact email address.')
       return
+    }
+
+    if (modalMode === 'add') {
+      const pwdValidation = validatePasswordStrength(formPassword)
+      if (!pwdValidation.valid) {
+        setFormError(`Password does not meet requirements: ${pwdValidation.errors.join(' ')}`)
+        return
+      }
     }
 
     setFormSubmitting(true)
     try {
       if (modalMode === 'add') {
-        const created = await dataService.createEmployee({
-          id: formId.trim(),
+        const result = await dataService.provisionEmployee({
+          employeeId: idValidation.normalized,
           name: formName.trim(),
-          email: formEmail.trim(),
+          contactEmail: formEmail.trim(),
           department: formDept,
           role: formRole,
+          initialPassword: formPassword,
         })
-        setEmployees(prev => [...prev, created])
-        showToast(`✓ Employee "${created.name}" created successfully.`)
+
+        // Refresh live directory list
+        await loadData()
+
+        // Open one-time credential modal
+        setOneTimeCredentials({
+          employeeId: result.employeeId,
+          password: formPassword,
+          uid: result.uid,
+          name: formName.trim(),
+        })
+
+        setShowAddEditModal(false)
+        setFormPassword('')
+        showToast(`✓ Account provisioned for ${formName.trim()}`)
       } else if (editingEmp) {
         const updated = await dataService.updateEmployee(editingEmp.id, {
           name: formName.trim(),
@@ -235,13 +289,25 @@ export default function Employees() {
         })
         setEmployees(prev => prev.map(e => (e.id === updated.id ? updated : e)))
         showToast(`✓ Employee "${updated.name}" updated successfully.`)
+        setShowAddEditModal(false)
       }
-      setShowAddEditModal(false)
     } catch (err: any) {
       setFormError(err?.message || 'Failed to save employee record.')
     } finally {
       setFormSubmitting(false)
     }
+  }
+
+  const handleCopyCredential = (text: string, field: 'id' | 'password' | 'all') => {
+    navigator.clipboard.writeText(text)
+    setCopiedField(field)
+    setTimeout(() => setCopiedField(null), 2500)
+  }
+
+  const handleCloseOneTimeCredentials = () => {
+    setOneTimeCredentials(null)
+    setFormPassword('')
+    setCopiedField(null)
   }
 
   const resetAllFilters = () => {
@@ -388,10 +454,17 @@ export default function Employees() {
               ({filteredEmployees.length} of {employees.length} shown)
             </span>
           </div>
-          <span className="mock-banner text-[10px]">
-            <span className="w-1.5 h-1.5 rounded-full bg-warning-400 animate-pulse" />
-            Phase 5 Mock Persistence
-          </span>
+          {isLive ? (
+            <span className="live-banner text-[10px]">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Live Firestore Directory
+            </span>
+          ) : (
+            <span className="mock-banner text-[10px]">
+              <span className="w-1.5 h-1.5 rounded-full bg-warning-400" />
+              Offline Demo Persistence
+            </span>
+          )}
         </div>
 
         {loading ? (
@@ -915,6 +988,50 @@ export default function Employees() {
                 </div>
               </div>
 
+              {/* Initial Password Section (Add Mode Only) */}
+              {modalMode === 'add' && (
+                <div className="space-y-1.5 p-3 rounded-xl bg-surface-900 border border-white/10">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-medium text-white/70 uppercase tracking-wider flex items-center gap-1.5">
+                      <Key className="w-3.5 h-3.5 text-brand-400" />
+                      Initial Password *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setFormPassword(generateSecurePassword(16))}
+                      className="text-[11px] text-brand-400 hover:text-brand-300 font-medium flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Regenerate
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      id="form-emp-password"
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="Enter strong password (min 8 chars)"
+                      value={formPassword}
+                      onChange={e => setFormPassword(e.target.value)}
+                      disabled={formSubmitting}
+                      className="input-field py-2 pr-9 text-xs font-mono"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(prev => !prev)}
+                      tabIndex={-1}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/80"
+                      title={showPassword ? 'Hide password' : 'Show password'}
+                    >
+                      {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-white/40 leading-relaxed">
+                    A Firebase Auth account will be created. The employee will sign in using their Employee ID + password.
+                  </p>
+                </div>
+              )}
+
               <div className="pt-3 border-t border-white/5 flex gap-2">
                 <button
                   type="button"
@@ -933,17 +1050,113 @@ export default function Employees() {
                   {formSubmitting ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      Saving...
+                      {modalMode === 'add' ? 'Provisioning Account...' : 'Saving...'}
                     </>
                   ) : (
                     <>
                       <Check className="w-3.5 h-3.5" />
-                      {modalMode === 'add' ? 'Create Employee' : 'Save Changes'}
+                      {modalMode === 'add' ? 'Provision Account' : 'Save Changes'}
                     </>
                   )}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: One-Time Credential Display ───────────────── */}
+      {oneTimeCredentials && (
+        <div className="fixed inset-0 z-50 bg-surface-950/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md glass-card p-6 space-y-4 animate-slide-up border-emerald-500/40 shadow-glow-green/20">
+            <div className="flex items-center gap-3 border-b border-white/10 pb-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 flex-shrink-0">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Employee Account Provisioned</h3>
+                <p className="text-xs text-white/50">
+                  Authentication account created for {oneTimeCredentials.name}
+                </p>
+              </div>
+            </div>
+
+            {/* Warning Alert */}
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 space-y-1 leading-relaxed">
+              <div className="flex items-center gap-1.5 font-semibold text-amber-300">
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>One-Time Credential Notice</span>
+              </div>
+              <p className="text-[11px] text-amber-200/80">
+                This password will <strong>never be shown again</strong> and is not stored in plaintext anywhere. Copy these credentials now to share securely with the employee.
+              </p>
+            </div>
+
+            {/* Credential Details */}
+            <div className="space-y-2.5 p-3.5 rounded-xl bg-surface-900 border border-white/10 text-xs font-mono">
+              {/* Employee ID */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] text-white/40 block font-sans">Employee Login ID:</span>
+                  <span className="text-emerald-400 font-bold">{oneTimeCredentials.employeeId}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCopyCredential(oneTimeCredentials.employeeId, 'id')}
+                  className="btn-secondary py-1 px-2.5 text-[11px] flex items-center gap-1"
+                >
+                  {copiedField === 'id' ? <CheckCheck className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedField === 'id' ? 'Copied' : 'Copy ID'}</span>
+                </button>
+              </div>
+
+              {/* Password */}
+              <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                <div>
+                  <span className="text-[10px] text-white/40 block font-sans">Initial Password:</span>
+                  <span className="text-white font-bold select-all">{oneTimeCredentials.password}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCopyCredential(oneTimeCredentials.password, 'password')}
+                  className="btn-secondary py-1 px-2.5 text-[11px] flex items-center gap-1"
+                >
+                  {copiedField === 'password' ? <CheckCheck className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedField === 'password' ? 'Copied' : 'Copy Password'}</span>
+                </button>
+              </div>
+
+              {/* Auth UID */}
+              <div className="pt-2 border-t border-white/5">
+                <span className="text-[10px] text-white/40 block font-sans">Firebase Auth UID:</span>
+                <span className="text-[11px] text-white/60 truncate block">{oneTimeCredentials.uid}</span>
+              </div>
+            </div>
+
+            {/* Buttons */}
+            <div className="space-y-2 pt-2">
+              <button
+                type="button"
+                onClick={() =>
+                  handleCopyCredential(
+                    `Employee ID: ${oneTimeCredentials.employeeId}\nPassword: ${oneTimeCredentials.password}`,
+                    'all'
+                  )
+                }
+                className="w-full py-2 px-3 rounded-lg bg-surface-800 hover:bg-surface-700 border border-white/10 text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition-all"
+              >
+                {copiedField === 'all' ? <CheckCheck className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedField === 'all' ? 'All Credentials Copied!' : 'Copy All Credentials'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCloseOneTimeCredentials}
+                className="btn-primary w-full py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-600/20"
+              >
+                I Have Saved The Credentials
+              </button>
+            </div>
           </div>
         </div>
       )}
