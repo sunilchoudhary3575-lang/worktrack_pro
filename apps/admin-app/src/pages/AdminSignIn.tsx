@@ -1,13 +1,15 @@
 import { useState } from 'react'
-import { Shield, Lock, Mail, AlertCircle, Info, ArrowRight, Loader2 } from 'lucide-react'
+import { Shield, Lock, Mail, AlertCircle, Info, ArrowRight, Loader2, Sun, Moon } from 'lucide-react'
 import { adminAuthService } from '../services/firebaseAuth'
 import { UserAccount } from '@worktrack-pro/shared'
+import { useTheme } from '../context/ThemeContext'
 
 interface AdminSignInProps {
   onSignedIn: (user: UserAccount, isDemo: boolean) => void
 }
 
 export default function AdminSignIn({ onSignedIn }: AdminSignInProps) {
+  const { theme, toggleTheme } = useTheme()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -15,18 +17,21 @@ export default function AdminSignIn({ onSignedIn }: AdminSignInProps) {
 
   const isConfigured = adminAuthService.isConfigured()
 
-  const handleSignIn = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSignIn = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
     setError(null)
 
-    if (!email.trim() || !password.trim()) {
+    const targetEmail = email.trim()
+    const targetPassword = password.trim()
+
+    if (!targetEmail || !targetPassword) {
       setError('Please provide both your administrator email and password.')
       return
     }
 
     setLoading(true)
     try {
-      const result = await adminAuthService.signIn(email.trim(), password)
+      const result = await adminAuthService.signIn(targetEmail, targetPassword)
       onSignedIn(result.user, result.isDemo)
     } catch (err: any) {
       setError(err.message || 'Authentication failed. Please check your credentials.')
@@ -43,6 +48,30 @@ export default function AdminSignIn({ onSignedIn }: AdminSignInProps) {
 
   return (
     <div className="min-h-screen bg-surface-950 flex flex-col justify-center items-center px-4 py-12 relative overflow-hidden">
+      {/* Top right theme toggle */}
+      <div className="absolute top-4 right-4 z-20">
+        <button
+          id="btn-theme-toggle-signin"
+          type="button"
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          aria-label={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-white/70 hover:text-white bg-surface-800/80 hover:bg-surface-700 border border-white/10 transition-all cursor-pointer shadow-sm active:scale-95"
+        >
+          {theme === 'dark' ? (
+            <>
+              <Sun className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-[11px]">Light Mode</span>
+            </>
+          ) : (
+            <>
+              <Moon className="w-3.5 h-3.5 text-indigo-500" />
+              <span className="text-[11px]">Dark Mode</span>
+            </>
+          )}
+        </button>
+      </div>
+
       {/* Background radial glow */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-brand-500/10 rounded-full blur-3xl pointer-events-none" />
 
@@ -104,7 +133,7 @@ export default function AdminSignIn({ onSignedIn }: AdminSignInProps) {
                   autoComplete="email"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
-                  placeholder="admin@worktrackpro.internal"
+                  placeholder="admin@company.com"
                   className="w-full pl-9 pr-3 py-2 text-xs rounded-lg bg-surface-900 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-colors"
                 />
               </div>
@@ -133,16 +162,16 @@ export default function AdminSignIn({ onSignedIn }: AdminSignInProps) {
               id="btn-admin-sign-in"
               type="submit"
               disabled={loading || !isConfigured}
-              className="btn-primary w-full py-2.5 text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-primary w-full py-2.5 text-xs font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-brand-500/20"
             >
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Authenticating...</span>
+                  <span>Signing In...</span>
                 </>
               ) : (
                 <>
-                  <span>Sign In as Administrator</span>
+                  <span>Sign In</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
@@ -161,7 +190,7 @@ export default function AdminSignIn({ onSignedIn }: AdminSignInProps) {
               <span>Continue with Offline Demo Admin</span>
             </button>
             <p className="text-[10px] text-center text-white/40 pt-2">
-              For local testing of Phases 3–8 without cloud connectivity.
+              For local testing with mock records without cloud connectivity.
             </p>
           </div>
         </div>

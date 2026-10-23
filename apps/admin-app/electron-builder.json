@@ -5,7 +5,7 @@
   "electronVersion": "28.2.0",
   "artifactName": "WorkTrackPro-Admin-Setup.exe",
   "directories": {
-    "output": "release",
+    "output": "build-output",
     "buildResources": "build"
   },
   "files": [

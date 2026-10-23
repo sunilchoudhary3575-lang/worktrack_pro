@@ -16,46 +16,65 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    function hasUserDoc(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid));
     }
 
-    // Verified Admin role: checked via Firebase Auth token custom claim or Firestore user doc
+    function getUserData(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    // Verified Admin role: strictly requires an existing active admin profile in /users/{uid}.
+    // Stale privileged token custom claims CANNOT bypass a demoted or disabled profile.
     function isAdmin() {
-      return isAuthenticated() && (
-        request.auth.token.role == 'admin' ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         getUserData().role == 'admin')
-      );
+      return isAuthenticated() &&
+        hasUserDoc(request.auth.uid) &&
+        getUserData(request.auth.uid).get('role', '') == 'admin' &&
+        getUserData(request.auth.uid).get('status', '') == 'active';
+    }
+
+    // Active User verification: requires an existing active profile in /users/{uid}
+    function isActiveUser() {
+      return isAuthenticated() &&
+        hasUserDoc(request.auth.uid) &&
+        getUserData(request.auth.uid).get('status', '') == 'active';
     }
 
     // ─── 1. Users Collection (/users/{userId}) ───
-    // Document ID MUST be the Firebase Auth UID
+    // Document ID MUST equal the Firebase Auth UID
     match /users/{userId} {
-      // Read: Users can inspect their own profile. Only Admins can inspect all user profiles.
+      // Read: Users can inspect their own profile. Only active Admins can inspect all user profiles.
       allow read: if isOwner(userId) || isAdmin();
 
       // Create:
-      // - Authenticated users may provision their initial profile document matching their auth UID.
-      // - SECURITY INVARIANT: Users CANNOT self-assign the 'admin' role.
-      // - Admins can create any user profile.
-      allow create: if (
-        isOwner(userId) &&
-        request.resource.data.uid == request.auth.uid &&
-        request.resource.data.role != 'admin'
-      ) || isAdmin();
+      // Accounts are provisioned exclusively by trusted backend (Firebase Admin SDK / Cloud Functions).
+      // Standard client SDK self-creation of /users profiles is completely removed (request.resource.data.role != 'admin').
+      // Active Admins may create profiles via client SDK if authorized.
+      allow create: if isAdmin();
 
       // Update:
-      // - Users can update non-privileged personal information (e.g. displayName, lastLoginAt).
-      // - SECURITY INVARIANT: Users CANNOT alter their assigned 'role' or their 'uid'.
-      // - Admins can update any profile, including changing roles.
-      allow update: if (
+      // - Active Admins can update any profile (including changing roles and status).
+      // - Non-admin users:
+      //   1. Must be the owner of the profile.
+      //   2. Must currently be active (disabled users cannot update profile).
+      //   3. Strict Allowlist: Non-admins can ONLY modify legitimate personal fields:
+      //      displayName, contactEmail, photoURL, phoneNumber, lastLoginAt, lastActiveAt, updatedAt.
+      //   4. Changes to authorization and ownership fields (role, status, uid, employeeId, email) are strictly blocked.
+      allow update: if isAdmin() || (
         isOwner(userId) &&
-        request.resource.data.role == resource.data.role &&
-        request.resource.data.uid == resource.data.uid
-      ) || isAdmin();
+        resource.data.get('status', 'active') == 'active' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'displayName',
+          'contactEmail',
+          'photoURL',
+          'phoneNumber',
+          'lastLoginAt',
+          'lastActiveAt',
+          'updatedAt'
+        ])
+      );
 
-      // Delete: Strictly Admin only
+      // Delete: Strictly active Admin only. Standard users cannot delete profiles.
       allow delete: if isAdmin();
     }
 
@@ -63,15 +82,14 @@ service cloud.firestore {
     // Document ID is the Employee corporate ID (e.g. emp_001)
     match /employees/{employeeId} {
       // Read:
-      // - Admins can view all corporate employee records.
+      // - Active Admins can view all corporate employee records.
       // - Employees can read ONLY their own record linked by userId. Cross-employee browsing is blocked.
       allow read: if isAdmin() || (
         isAuthenticated() && resource.data.userId == request.auth.uid
       );
 
       // Write (Create, Update, Delete):
-      // Corporate employee directory management is strictly restricted to Admins.
-      // Standard employees CANNOT add, modify, or remove employee records.
+      // Corporate employee directory management is strictly restricted to active Admins.
       allow create, update, delete: if isAdmin();
     }
 
@@ -79,92 +97,196 @@ service cloud.firestore {
     // Document ID is the unique Device Hardware ID
     match /devices/{deviceId} {
       // Read:
-      // - Admins can view all devices across the enterprise.
+      // - Active Admins can view all devices across the enterprise.
       // - Employees can view ONLY devices registered to their own userId.
       allow read: if isAdmin() || (
-        isAuthenticated() && resource.data.userId == request.auth.uid
+        isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid)
       );
 
       // Create:
-      // - Authenticated employees can submit their device registration request.
-      // - SECURITY INVARIANTS:
-      //   1. Must link to their own Firebase Auth UID.
-      //   2. Device initial approvalStatus MUST be 'pending' or 'pending_approval'.
-      //   3. Employees CANNOT register a pre-approved device.
-      allow create: if isAuthenticated() &&
+      // - Active Admins can register any device.
+      // - Active, linked Employees can submit device registration for themselves:
+      //   1. Must be an active user profile.
+      //   2. Must link to their own Firebase Auth UID.
+      //   3. Must link to their own employeeId from profile.
+      //   4. Document ID must match deviceId field.
+      //   5. Device initial approvalStatus MUST be 'pending' or 'pending_approval'.
+      allow create: if isAdmin() || (
+        isActiveUser() &&
         request.resource.data.userId == request.auth.uid &&
-        request.resource.data.approvalStatus in ['pending', 'pending_approval'];
-
-      // Update:
-      // - Admins can modify any device attribute (including approvalStatus to 'approved' or 'rejected').
-      // - Employees can update hardware telemetry (e.g. hostname, lastSeen, osVersion),
-      //   but CANNOT change approvalStatus, userId, or deviceId.
-      allow update: if isAdmin() || (
-        isAuthenticated() &&
-        resource.data.userId == request.auth.uid &&
-        request.resource.data.approvalStatus == resource.data.approvalStatus &&
-        request.resource.data.userId == resource.data.userId &&
-        request.resource.data.deviceId == resource.data.deviceId
+        request.resource.data.employeeId == getUserData(request.auth.uid).get('employeeId', '') &&
+        request.resource.data.deviceId == deviceId &&
+        request.resource.data.approvalStatus in ['pending', 'pending_approval']
       );
 
-      // Delete: Strictly Admin only
+      // Update:
+      // - Active Admins can modify any device attribute (e.g. approve/reject).
+      // - Active, linked Employees can update hardware telemetry:
+      //   1. Must be an active user profile.
+      //   2. BOTH existing and incoming userId must match request.auth.uid.
+      //   3. Ownership and approval fields are immutable for employees:
+      //      approvalStatus, userId, deviceId, employeeId.
+      //   4. Approval audit fields (reviewedBy, reviewedAt, rejectionReason) cannot be modified by employees.
+      allow update: if isAdmin() || (
+        isActiveUser() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.deviceId == resource.data.deviceId &&
+        request.resource.data.employeeId == resource.data.employeeId &&
+        request.resource.data.approvalStatus == resource.data.approvalStatus &&
+        request.resource.data.get('reviewedBy', '') == resource.data.get('reviewedBy', '') &&
+        request.resource.data.get('reviewedAt', '') == resource.data.get('reviewedAt', '') &&
+        request.resource.data.get('rejectionReason', '') == resource.data.get('rejectionReason', '')
+      );
+
+      // Delete: Strictly active Admin only
       allow delete: if isAdmin();
     }
 
     // ─── 4. Device Approvals Collection (/device_approvals/{approvalId}) ───
-    // Audit log and approval state machine
     match /device_approvals/{approvalId} {
-      // Read:
-      // - Admins can review all approval history.
-      // - Employees can read approval status for devices belonging to their own userId.
       allow read: if isAdmin() || (
         isAuthenticated() && resource.data.userId == request.auth.uid
       );
-
-      // Write (Create, Update, Delete):
-      // SECURITY INVARIANT: Strictly Admin only.
-      // Employees CANNOT approve or reject their own or any other device.
       allow create, update, delete: if isAdmin();
     }
 
     // ─── 5. Work Sessions Collection (/work_sessions/{sessionId}) ───
     match /work_sessions/{sessionId} {
-      // Read: Admins can inspect all sessions across the enterprise.
+      // Read: Active Admins can inspect all sessions.
       // Employees can read only their own sessions.
       allow read: if isAdmin() || (
         isAuthenticated() && resource.data.userId == request.auth.uid
       );
 
-      // Write:
-      // - Admins have full management access.
-      // - Authenticated employees can record their own sessions (clock in, pauses, clock out).
-      allow create, update: if isAdmin() || (
-        isAuthenticated() && request.resource.data.userId == request.auth.uid
+      // Create (Separated):
+      // - Active Admins can create any session.
+      // - Authenticated, active Employees can record a new session:
+      //   1. Must have an active user profile.
+      //   2. Document ID matches payload id / sessionId.
+      //   3. Incoming userId must match request.auth.uid.
+      //   4. employeeId matches employee profile.
+      //   5. Device ownership & approval check:
+      //      Device exists, belongs to this employee (userId == request.auth.uid),
+      //      and approvalStatus == 'approved'.
+      //   6. Initial status must be a valid initial or offline-completed state:
+      //      ['working', 'paused', 'completed', 'active'].
+      //      If created as 'completed' (offline sync), endedAt is required.
+      allow create: if isAdmin() || (
+        isActiveUser() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.get('id', sessionId) == sessionId &&
+        request.resource.data.employeeId == getUserData(request.auth.uid).get('employeeId', '') &&
+        exists(/databases/$(database)/documents/devices/$(request.resource.data.deviceId)) &&
+        get(/databases/$(database)/documents/devices/$(request.resource.data.deviceId)).data.userId == request.auth.uid &&
+        get(/databases/$(database)/documents/devices/$(request.resource.data.deviceId)).data.approvalStatus == 'approved' &&
+        request.resource.data.status in ['working', 'paused', 'completed', 'active'] &&
+        request.resource.data.startedAt is string &&
+        (request.resource.data.status != 'completed' || (request.resource.data.endedAt is string && request.resource.data.endedAt.size() > 0))
       );
+
+      // Update (Separated):
+      // - Active Admins have full management access.
+      // - Authenticated, active Employees can update their own session:
+      //   1. Must have an active user profile.
+      //   2. BOTH existing and incoming userId MUST match request.auth.uid (prevents taking over or transferring session).
+      //   3. Session identity, employeeId, and deviceId are immutable:
+      //      request.resource.data.get('id', sessionId) == resource.data.get('id', sessionId) &&
+      //      request.resource.data.employeeId == resource.data.employeeId &&
+      //      request.resource.data.deviceId == resource.data.deviceId &&
+      //      request.resource.data.startedAt == resource.data.startedAt.
+      //   4. Device ownership & approval preserved:
+      //      Device exists, belongs to employee, and is approved.
+      //   5. Strict Status Transitions:
+      //      - A 'completed' session CANNOT reopen (only idempotent status == 'completed' allowed).
+      //      - 'working' / 'active' can transition to 'paused' or 'completed' (or remain 'working' / 'active').
+      //      - 'paused' can transition to 'working' / 'active' or 'completed' (or remain 'paused').
+      //      - Preserves legitimate session breaks, completion, and idempotent offline retries.
+      allow update: if isAdmin() || (
+        isActiveUser() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.get('id', sessionId) == resource.data.get('id', sessionId) &&
+        request.resource.data.employeeId == resource.data.employeeId &&
+        request.resource.data.deviceId == resource.data.deviceId &&
+        request.resource.data.startedAt == resource.data.startedAt &&
+        exists(/databases/$(database)/documents/devices/$(resource.data.deviceId)) &&
+        get(/databases/$(database)/documents/devices/$(resource.data.deviceId)).data.userId == request.auth.uid &&
+        get(/databases/$(database)/documents/devices/$(resource.data.deviceId)).data.approvalStatus == 'approved' &&
+        (
+          request.resource.data.status == resource.data.status ||
+          (resource.data.status in ['working', 'active'] && request.resource.data.status in ['paused', 'completed']) ||
+          (resource.data.status == 'paused' && request.resource.data.status in ['working', 'active', 'completed'])
+        ) &&
+        (request.resource.data.status != 'completed' || (request.resource.data.endedAt is string && request.resource.data.endedAt.size() > 0))
+      );
+
+      // Delete: Strictly active Admin only. Employees cannot delete work sessions.
       allow delete: if isAdmin();
     }
 
     // ─── 6. Screenshots Collection (/screenshots/{screenshotId}) ───
     match /screenshots/{screenshotId} {
-      // Read: Admins can view all captured screenshots.
-      // Employees can view only screenshots captured on their own authorized sessions.
+      // Read: Active Admins can inspect all screenshots. Employees can inspect only their own.
       allow read: if isAdmin() || (
         isAuthenticated() && resource.data.userId == request.auth.uid
       );
 
-      // Create: Employees can store screenshots during active monitoring sessions; Admins can store.
+      // Create:
+      // - Active Administrators can store screenshot records.
+      // - Authenticated, active Employees can record screenshot metadata subject to strict invariants:
+      //   1. Ownership: userId matches authenticated UID.
+      //   2. Profile: User profile document exists and is 'active'.
+      //   3. ID Consistency: Document ID matches metadata 'id' field.
+      //   4. Storage Path: Strictly conforms to 'screenshots/{authUid}/{sessionId}/{screenshotId}.jpg'.
+      //   5. Strict Work Session Validation:
+      //      - Work session document MUST exist in /work_sessions/{sessionId}. (Unconditional allowance removed).
+      //      - Session MUST belong to this employee (work_sessions.userId == request.auth.uid).
+      //      - employeeId and deviceId match authenticated employee and session:
+      //        request.resource.data.employeeId == getUserData(request.auth.uid).get('employeeId', '') &&
+      //        request.resource.data.employeeId == get(/databases/$(database)/documents/work_sessions/$(request.resource.data.sessionId)).data.employeeId &&
+      //        request.resource.data.deviceId == get(/databases/$(database)/documents/work_sessions/$(request.resource.data.sessionId)).data.deviceId.
+      //      - Accommodates delayed uploads for ended/paused owned sessions (session status is not restricted to active).
+      //   6. Schema & Field Types: Validates all required metadata fields and data types.
       allow create: if isAdmin() || (
-        isAuthenticated() && request.resource.data.userId == request.auth.uid
+        isAuthenticated() &&
+        isActiveUser() &&
+        // Ownership & ID consistency
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.id == screenshotId &&
+        // Session existence & ownership validation (unconditional nonexistent allowance REMOVED)
+        request.resource.data.sessionId is string &&
+        request.resource.data.sessionId.size() > 0 &&
+        exists(/databases/$(database)/documents/work_sessions/$(request.resource.data.sessionId)) &&
+        get(/databases/$(database)/documents/work_sessions/$(request.resource.data.sessionId)).data.userId == request.auth.uid &&
+        // Consistency across user, session, and device
+        request.resource.data.employeeId == getUserData(request.auth.uid).get('employeeId', '') &&
+        request.resource.data.employeeId == get(/databases/$(database)/documents/work_sessions/$(request.resource.data.sessionId)).data.employeeId &&
+        request.resource.data.deviceId == get(/databases/$(database)/documents/work_sessions/$(request.resource.data.sessionId)).data.deviceId &&
+        // Storage path invariant
+        request.resource.data.storagePath == 'screenshots/' + request.auth.uid + '/' + request.resource.data.sessionId + '/' + screenshotId + '.jpg' &&
+        // Field type and value validation
+        request.resource.data.takenAt is string &&
+        request.resource.data.createdAt is string &&
+        request.resource.data.format in ['jpg', 'jpeg'] &&
+        request.resource.data.status in ['uploaded', 'pending'] &&
+        request.resource.data.fileSizeBytes is int &&
+        request.resource.data.fileSizeBytes > 0 &&
+        request.resource.data.fileSizeBytes < 5 * 1024 * 1024 &&
+        request.resource.data.width is int && request.resource.data.width > 0 &&
+        request.resource.data.height is int && request.resource.data.height > 0
       );
+
+      // Update: Immutable captures. Existing screenshot metadata cannot be modified.
+      allow update: if false;
+
+      // Delete: Strictly restricted to active Administrators.
       allow delete: if isAdmin();
     }
 
     // ─── 7. Policy Settings Collection (/settings/{settingsId}) ───
     match /settings/{settingsId} {
-      // Read: All authenticated users can read organizational monitoring policy.
       allow read: if isAuthenticated();
-
-      // Write: Strictly Admin only.
       allow create, update, delete: if isAdmin();
     }
   }

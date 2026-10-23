@@ -5,7 +5,7 @@
   "electronVersion": "28.2.0",
   "artifactName": "WorkTrackPro-Employee-Setup.exe",
   "directories": {
-    "output": "release",
+    "output": "release-v1",
     "buildResources": "build"
   },
   "files": [

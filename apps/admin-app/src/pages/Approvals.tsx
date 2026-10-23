@@ -63,6 +63,17 @@ export default function Approvals() {
 
   useEffect(() => {
     loadData()
+
+    if (isLiveFirestoreActive()) {
+      const unsub = dataService.subscribeToDeviceRegistrations(
+        records => setDeviceRegistrations(records),
+        err => console.error('[Approvals] Real-time device registration sync error:', err)
+      )
+
+      return () => {
+        if (typeof unsub === 'function') unsub()
+      }
+    }
   }, [])
 
   const loadData = async () => {

@@ -16,12 +16,14 @@ import {
   Firestore,
 } from 'firebase/firestore'
 import { getFunctions, Functions } from 'firebase/functions'
+import { getStorage, FirebaseStorage } from 'firebase/storage'
 import { UserAccount, formatAuthError } from '@worktrack-pro/shared'
 
 let firebaseApp: FirebaseApp | null = null
 let firebaseAuth: Auth | null = null
 let firestoreDb: Firestore | null = null
 let firebaseFunctions: Functions | null = null
+let firebaseStorage: FirebaseStorage | null = null
 
 export function getFirebaseConfig() {
   const apiKey =
@@ -74,9 +76,10 @@ export function getFirebaseInstance(): {
   auth: Auth | null
   db: Firestore | null
   functions: Functions | null
+  storage: FirebaseStorage | null
 } {
   if (!isFirebaseConfigured()) {
-    return { app: null, auth: null, db: null, functions: null }
+    return { app: null, auth: null, db: null, functions: null, storage: null }
   }
 
   if (!firebaseApp) {
@@ -85,6 +88,7 @@ export function getFirebaseInstance(): {
       firebaseAuth = getAuth(firebaseApp)
       firestoreDb = getFirestore(firebaseApp)
       firebaseFunctions = getFunctions(firebaseApp, 'us-central1')
+      firebaseStorage = getStorage(firebaseApp)
 
       // Ensure persistent login across app restarts in Electron renderer
       if (typeof window !== 'undefined') {
@@ -94,11 +98,11 @@ export function getFirebaseInstance(): {
       }
     } catch (err) {
       console.error('[FirebaseAuth] Initialization error:', err)
-      return { app: null, auth: null, db: null, functions: null }
+      return { app: null, auth: null, db: null, functions: null, storage: null }
     }
   }
 
-  return { app: firebaseApp, auth: firebaseAuth, db: firestoreDb, functions: firebaseFunctions }
+  return { app: firebaseApp, auth: firebaseAuth, db: firestoreDb, functions: firebaseFunctions, storage: firebaseStorage }
 }
 
 export async function fetchUserProfile(uid: string): Promise<UserAccount | null> {

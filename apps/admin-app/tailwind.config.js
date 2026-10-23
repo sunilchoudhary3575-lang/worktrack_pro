@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: 'class',
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -21,14 +22,14 @@ export default {
           900: '#2d2d96',
           950: '#1b1b5e',
         },
-        // Dark surface palette
+        // Dynamic surface palette (driven by dark/light CSS variables)
         surface: {
-          950: '#0a0a14',
-          900: '#10101e',
-          800: '#16162a',
-          700: '#1e1e35',
-          600: '#252542',
-          500: '#2e2e52',
+          950: 'rgb(var(--surface-950) / <alpha-value>)',
+          900: 'rgb(var(--surface-900) / <alpha-value>)',
+          800: 'rgb(var(--surface-800) / <alpha-value>)',
+          700: 'rgb(var(--surface-700) / <alpha-value>)',
+          600: 'rgb(var(--surface-600) / <alpha-value>)',
+          500: 'rgb(var(--surface-500) / <alpha-value>)',
         },
         // Accent — cyan for live/active states
         accent: {

@@ -8,12 +8,26 @@ out/
 build/
 release/
 **/release/
+build-output/
+**/build-output/
+dist-release/
+**/dist-release/
+dist-pack/
+**/dist-pack/
+release-v1/
+**/release-v1/
 functions/lib/
 *.exe
 *.dmg
 *.deb
 *.AppImage
 *.snap
+*.asar
+*.blockmap
+*.pak
+*.dll
+*.dat
+*.bin
 
 # Vite
 .vite/
@@ -29,6 +43,10 @@ functions/lib/
 serviceAccountKey.json
 google-services.json
 GoogleService-Info.plist
+
+# Temporary files & test artifacts
+/*.jpg
+/*.png
 
 # Logs
 logs/

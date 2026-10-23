@@ -16,18 +16,21 @@ export default function EmployeeSignInScreen({ onSignedIn }: EmployeeSignInProps
 
   const isConfigured = employeeAuthService.isConfigured()
 
-  const handleSignIn = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSignIn = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
     setError(null)
 
-    if (!employeeId.trim() || !password.trim()) {
+    const targetEmpId = employeeId.trim()
+    const targetPassword = password.trim()
+
+    if (!targetEmpId || !targetPassword) {
       setError('Please enter both your Employee ID and password.')
       return
     }
 
     setLoading(true)
     try {
-      const result = await employeeAuthService.signIn(employeeId.trim(), password)
+      const result = await employeeAuthService.signIn(targetEmpId, targetPassword)
       onSignedIn(result.user, result.isDemo)
     } catch (err: any) {
       setError(err.message || 'Invalid Employee ID or password. Please verify your credentials.')
@@ -146,17 +149,17 @@ export default function EmployeeSignInScreen({ onSignedIn }: EmployeeSignInProps
               id="btn-employee-sign-in"
               type="submit"
               disabled={loading || !isConfigured}
-              className="btn-primary w-full py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-primary w-full py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-emerald-500/20"
             >
               {loading ? (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin" />
                   <span>Signing In...</span>
                 </>
               ) : (
                 <>
-                  <span>Sign In</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  <span>Sign In to Workspace</span>
+                  <ArrowRight className="w-4 h-4" />
                 </>
               )}
             </button>

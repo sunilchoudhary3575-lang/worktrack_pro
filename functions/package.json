@@ -18,7 +18,6 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "@worktrack-pro/shared": "*",
     "esbuild": "^0.27.0",
     "typescript": "^5.3.0"
   }

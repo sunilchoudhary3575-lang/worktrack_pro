@@ -15,6 +15,7 @@ import {
   getDoc,
   Firestore,
 } from 'firebase/firestore'
+import { getStorage, FirebaseStorage } from 'firebase/storage'
 import {
   UserAccount,
   formatAuthError,
@@ -25,6 +26,7 @@ import {
 let firebaseApp: FirebaseApp | null = null
 let firebaseAuth: Auth | null = null
 let firestoreDb: Firestore | null = null
+let firebaseStorage: FirebaseStorage | null = null
 
 export function getFirebaseConfig() {
   const apiKey =
@@ -72,13 +74,22 @@ export function isFirebaseConfigured(): boolean {
   )
 }
 
+let testFirebaseOverride: any = null
+export function setTestFirebaseInstances(instances: any) {
+  testFirebaseOverride = instances
+}
+
 export function getFirebaseInstance(): {
   app: FirebaseApp | null
   auth: Auth | null
   db: Firestore | null
+  storage: FirebaseStorage | null
 } {
+  if (testFirebaseOverride) {
+    return testFirebaseOverride
+  }
   if (!isFirebaseConfigured()) {
-    return { app: null, auth: null, db: null }
+    return { app: null, auth: null, db: null, storage: null }
   }
 
   if (!firebaseApp) {
@@ -86,6 +97,7 @@ export function getFirebaseInstance(): {
       firebaseApp = getApps().length > 0 ? getApp() : initializeApp(getFirebaseConfig())
       firebaseAuth = getAuth(firebaseApp)
       firestoreDb = getFirestore(firebaseApp)
+      firebaseStorage = getStorage(firebaseApp)
 
       // Ensure persistent login across app restarts in Electron renderer
       if (typeof window !== 'undefined') {
@@ -95,11 +107,11 @@ export function getFirebaseInstance(): {
       }
     } catch (err) {
       console.error('[FirebaseAuth] Initialization error:', err)
-      return { app: null, auth: null, db: null }
+      return { app: null, auth: null, db: null, storage: null }
     }
   }
 
-  return { app: firebaseApp, auth: firebaseAuth, db: firestoreDb }
+  return { app: firebaseApp, auth: firebaseAuth, db: firestoreDb, storage: firebaseStorage }
 }
 
 export async function fetchUserProfile(uid: string): Promise<UserAccount | null> {
@@ -259,6 +271,15 @@ export const employeeAuthService = {
       localStorage.removeItem(DEMO_EMPLOYEE_STORAGE_KEY)
     }
     return null
+  },
+
+  getAuthUid(): string | null {
+    const { auth } = getFirebaseInstance()
+    if (auth?.currentUser) {
+      return auth.currentUser.uid
+    }
+    const demo = this.getStoredDemoUser()
+    return demo?.uid || null
   },
 
   async signOut(): Promise<void> {

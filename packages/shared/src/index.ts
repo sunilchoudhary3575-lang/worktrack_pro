@@ -27,6 +27,105 @@ export interface Employee {
   avatarUrl?: string;
   createdAt: Date;
   updatedAt: Date;
+  userId?: string;
+  status?: 'active' | 'inactive' | 'suspended';
+}
+
+// ─── Distinct System & UI Status States ───────────────────────
+
+export type AccountStatus = 'activated' | 'not_activated' | 'disabled';
+export type DeviceApprovalState = 'pending' | 'approved' | 'rejected' | 'unregistered';
+export type PresenceStatus = 'online' | 'offline' | 'unknown';
+export type SessionState = 'working' | 'on_break' | 'ended' | 'no_session';
+
+export const PRESENCE_EXPIRY_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
+export const HEARTBEAT_INTERVAL_MS = 60 * 1000; // 60 seconds
+
+export function deriveAccountStatus(
+  employee?: { userId?: string; status?: string } | null,
+  userAccount?: { status?: string; uid?: string } | null
+): AccountStatus {
+  if (userAccount?.status === 'disabled' || employee?.status === 'suspended' || employee?.status === 'inactive') {
+    return 'disabled';
+  }
+  if (employee?.userId || userAccount?.uid) {
+    return 'activated';
+  }
+  return 'not_activated';
+}
+
+export function deriveDeviceApprovalState(
+  device?: { approvalStatus?: string; status?: string } | null,
+  registration?: { status?: string } | null
+): DeviceApprovalState {
+  const st = (device?.approvalStatus || registration?.status || '').toLowerCase();
+  if (st === 'approved') return 'approved';
+  if (st === 'pending' || st === 'pending_approval') return 'pending';
+  if (st === 'rejected') return 'rejected';
+  return 'unregistered';
+}
+
+export function derivePresenceStatus(
+  lastHeartbeat: Date | string | number | undefined | null,
+  now: Date = new Date(),
+  thresholdMs = PRESENCE_EXPIRY_THRESHOLD_MS
+): PresenceStatus {
+  if (!lastHeartbeat) return 'unknown';
+  const hbDate = parseDate(lastHeartbeat as any);
+  if (!hbDate) return 'unknown';
+  const diff = now.getTime() - hbDate.getTime();
+  // Allow slight clock skew forward up to thresholdMs
+  if (diff >= -thresholdMs && diff <= thresholdMs) {
+    return 'online';
+  }
+  return 'offline';
+}
+
+export function deriveEmployeePresence(
+  devices: Array<{ lastHeartbeat?: any; lastSeen?: any; status?: string }> | undefined | null,
+  userLastActive?: any,
+  now: Date = new Date(),
+  thresholdMs = PRESENCE_EXPIRY_THRESHOLD_MS
+): PresenceStatus {
+  const devs = devices || [];
+  let hasKnownHeartbeat = false;
+  let anyOnline = false;
+
+  for (const dev of devs) {
+    const hb = dev.lastHeartbeat || dev.lastSeen;
+    if (hb) {
+      hasKnownHeartbeat = true;
+      const status = derivePresenceStatus(hb, now, thresholdMs);
+      if (status === 'online') {
+        anyOnline = true;
+      }
+    }
+  }
+
+  if (anyOnline) {
+    return 'online';
+  }
+
+  if (hasKnownHeartbeat) {
+    return 'offline';
+  }
+
+  if (userLastActive) {
+    return derivePresenceStatus(userLastActive, now, thresholdMs);
+  }
+
+  return 'unknown';
+}
+
+export function deriveSessionState(
+  session?: { status?: string; endedAt?: any } | null
+): SessionState {
+  if (!session) return 'no_session';
+  const st = (session.status || '').toLowerCase();
+  if (st === 'working' || st === 'active') return 'working';
+  if (st === 'on_break' || st === 'paused') return 'on_break';
+  if (st === 'ended' || st === 'completed') return 'ended';
+  return 'no_session';
 }
 
 // ─── Device ─────────────────────────────────────────────────
@@ -63,9 +162,14 @@ export interface Device {
   osVersion: string;
   appVersion: string;
   status: DeviceStatus;
+  approvalStatus?: DeviceRegistrationStatus;
   ipAddress?: string;
   lastSeen: Date;
+  lastHeartbeat?: Date;
   registeredAt: Date;
+  reviewedAt?: Date | string;
+  reviewedBy?: string;
+  rejectionReason?: string;
 }
 
 // ─── Employee Break ─────────────────────────────────────────
@@ -127,9 +231,20 @@ export interface SerializedWorkSession {
 
 // ─── Time Calculation Helpers (Timestamp source of truth) ──
 
-export function parseDate(val: Date | string | undefined | null): Date | undefined {
+export function parseDate(val: any): Date | undefined {
   if (!val) return undefined;
   if (val instanceof Date) return isNaN(val.getTime()) ? undefined : val;
+  if (typeof val?.toDate === 'function') {
+    try {
+      const d = val.toDate();
+      if (d instanceof Date && !isNaN(d.getTime())) return d;
+    } catch {}
+  }
+  if (typeof val === 'object' && typeof val?.seconds === 'number') {
+    const ms = val.seconds * 1000 + (val.nanoseconds ? Math.floor(val.nanoseconds / 1e6) : 0);
+    const d = new Date(ms);
+    if (!isNaN(d.getTime())) return d;
+  }
   const d = new Date(val);
   return isNaN(d.getTime()) ? undefined : d;
 }
@@ -189,17 +304,76 @@ export function calculateSessionDurations(
 
 // ─── Screenshot ──────────────────────────────────────────────
 
+export type ScreenshotUploadStatus = 'uploaded' | 'pending' | 'failed';
+export type ScreenshotImageFormat = 'png' | 'jpg' | 'jpeg';
+
 export interface Screenshot {
   id: string;
   sessionId: string;
   employeeId: string;
+  employeeName?: string;
+  userId?: string;
   deviceId: string;
   takenAt: Date;
+  createdAt?: Date;
   imageUrl: string;
+  storagePath?: string;
   thumbnailUrl?: string;
   fileSizeBytes?: number;
   width?: number;
   height?: number;
+  format?: ScreenshotImageFormat;
+  status?: ScreenshotUploadStatus;
+  retryCount?: number;
+}
+
+export interface SerializedScreenshot {
+  id: string;
+  sessionId: string;
+  employeeId: string;
+  employeeName?: string;
+  userId: string;
+  deviceId: string;
+  takenAt: string;
+  createdAt: string;
+  imageUrl?: string;
+  storagePath: string;
+  downloadUrl?: string;
+  fileSizeBytes: number;
+  width: number;
+  height: number;
+  format: ScreenshotImageFormat;
+  status: ScreenshotUploadStatus;
+}
+
+export interface ScreenshotOutboxItem {
+  id: string;
+  sessionId: string;
+  employeeId: string;
+  employeeName?: string;
+  userId: string;
+  deviceId: string;
+  takenAt: string;
+  storagePath: string;
+  dataUrl?: string;
+  filePath?: string;
+  fileSizeBytes: number;
+  width: number;
+  height: number;
+  format: ScreenshotImageFormat;
+  status: 'pending' | 'failed';
+  retryCount: number;
+  lastAttemptAt?: string;
+  lastError?: string;
+}
+
+export interface ScreenshotFilters {
+  employeeId?: string;
+  sessionId?: string;
+  dateStr?: string;
+  startDate?: Date;
+  endDate?: Date;
+  limit?: number;
 }
 
 // ─── Pre-Authorized Monitoring Policy ─────────────────────────
@@ -510,7 +684,7 @@ export interface LocalScreenshotMetadata {
   fileSizeBytes: number;
   width: number;
   height: number;
-  format: 'png';
+  format: 'png' | 'jpg' | 'jpeg';
   isLocalOnly: true;
   retentionNotice: string;
 }
@@ -521,6 +695,7 @@ export interface CaptureScreenshotPayload {
   employeeId?: string;
   timestamp?: Date | string;
   checkScheduleHours?: boolean;
+  interactive?: boolean;
 }
 
 export type CaptureErrorCode =
@@ -646,6 +821,8 @@ export interface UserAccount {
   status: 'active' | 'disabled';
   createdAt: string;
   lastLoginAt?: string;
+  lastActiveAt?: any;
+  updatedAt?: any;
 }
 
 export interface FirestoreEmployeeDoc {
@@ -921,4 +1098,18 @@ export interface ProvisionEmployeeResult {
   role: EmployeeRole;
   department: string;
 }
+
+// ─── Reset Password Types ─────────────────────────────────────
+export interface ResetEmployeePasswordPayload {
+  employeeId: string;
+  newPassword: string;
+}
+
+export interface ResetEmployeePasswordResult {
+  success: boolean;
+  employeeId: string;
+  uid: string;
+  updatedAt: string;
+}
+
 

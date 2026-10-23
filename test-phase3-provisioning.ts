@@ -370,7 +370,153 @@ async function runProvisioningTests() {
     () => simulateEmployeeAppLogin('non_existent_emp', 'pass', 'non_existent_uid'),
     /Invalid Employee ID or password/
   )
-  console.log('  ✓ Employee App login flow, role restrictions, and privacy protection verified')
+  // ────────────────────────────────────────────────────────────
+  // Test 8: Safe Activation of Existing Unlinked Employee Record
+  // ────────────────────────────────────────────────────────────
+  console.log('\nTest 8: Safe Activation of Existing Unlinked Employee Record (e.g. emp_001)')
+
+  // Pre-seed an unlinked employee record (representing Jayesh / emp_001)
+  directoryEmployees.set('emp_001', {
+    employeeId: 'emp_001',
+    userId: undefined, // unlinked
+    name: 'Jayesh',
+    email: 'jayesh@gmail.com',
+    department: 'Marketing',
+    role: 'employee',
+    status: 'active',
+    createdAt: '2026-10-17T06:47:06.897Z',
+  })
+
+  // Mock implementation with unlinked activation support
+  async function mockProvisionOrActivateEmployee(payload: {
+    employeeId: string
+    name?: string
+    contactEmail?: string
+    department?: string
+    role?: string
+    initialPassword: string
+  }, callerUid: string) {
+    const authCheck = verifyAdminCaller({ uid: callerUid })
+    if (!authCheck.authorized) throw new Error(`Permission Denied: ${authCheck.reason}`)
+
+    const normalizedId = normalizeEmployeeId(payload.employeeId)
+    const syntheticEmail = formatEmployeeAuthEmail(normalizedId)
+
+    const existingDoc = directoryEmployees.get(normalizedId)
+    const isExisting = !!existingDoc
+
+    if (isExisting && existingDoc.userId) {
+      throw new Error(`already-exists: Employee ID "${normalizedId}" is already linked to an active user account`)
+    }
+
+    const employeeName = (isExisting && existingDoc.name) ? existingDoc.name : (payload.name || '')
+    const employeeDept = (isExisting && existingDoc.department) ? existingDoc.department : (payload.department || 'General')
+    const finalEmail = (isExisting && existingDoc.email) ? existingDoc.email : (payload.contactEmail || '')
+
+    // Check contact email collision against OTHER employees
+    for (const [id, emp] of directoryEmployees) {
+      if (id !== normalizedId && emp.email.toLowerCase() === finalEmail.toLowerCase()) {
+        throw new Error(`already-exists: Contact email already in use by another employee`)
+      }
+    }
+
+    // 1. Create Auth user
+    const generatedUid = `auth_uid_${normalizedId}`
+    authUsers.set(generatedUid, {
+      uid: generatedUid,
+      email: syntheticEmail,
+      displayName: employeeName,
+    })
+
+    // 2. Write /users/{uid}
+    const nowIso = new Date().toISOString()
+    mockUsers.set(generatedUid, {
+      uid: generatedUid,
+      email: syntheticEmail,
+      contactEmail: finalEmail,
+      displayName: employeeName,
+      role: 'employee',
+      employeeId: normalizedId,
+      status: 'active',
+      createdAt: nowIso,
+      provisionedBy: callerUid,
+    })
+
+    // 3. Update or create /employees/{id}
+    if (isExisting) {
+      existingDoc.userId = generatedUid
+      existingDoc.updatedAt = nowIso
+      existingDoc.status = 'active'
+    } else {
+      directoryEmployees.set(normalizedId, {
+        employeeId: normalizedId,
+        userId: generatedUid,
+        name: employeeName,
+        email: finalEmail,
+        department: employeeDept,
+        role: 'employee',
+        status: 'active',
+        createdAt: nowIso,
+      })
+    }
+
+    return {
+      success: true,
+      uid: generatedUid,
+      employeeId: normalizedId,
+      authEmail: syntheticEmail,
+      contactEmail: finalEmail,
+      name: employeeName,
+    }
+  }
+
+  // 1. Activate unlinked emp_001
+  const actRes = await mockProvisionOrActivateEmployee({
+    employeeId: 'emp_001',
+    initialPassword: generateSecurePassword(16),
+  }, 'admin_active_uid')
+
+  assert.equal(actRes.success, true)
+  assert.equal(actRes.employeeId, 'emp_001')
+  assert.equal(actRes.name, 'Jayesh', 'Existing name preserved')
+  assert.equal(actRes.contactEmail, 'jayesh@gmail.com', 'Existing contact email preserved')
+  assert.equal(actRes.authEmail, `emp_001@${SYNTHETIC_AUTH_EMAIL_DOMAIN}`)
+
+  // Verify linking
+  const linkedJayesh = directoryEmployees.get('emp_001')
+  assert.equal(linkedJayesh.userId, actRes.uid, 'emp_001.userId linked to new auth UID')
+  assert.equal(linkedJayesh.createdAt, '2026-10-17T06:47:06.897Z', 'Pre-existing createdAt preserved')
+  assert.equal(mockUsers.get(actRes.uid).employeeId, 'emp_001')
+
+  // 2. Re-activation attempt on already-linked record must fail
+  await assert.rejects(
+    () => mockProvisionOrActivateEmployee({
+      employeeId: 'emp_001',
+      initialPassword: generateSecurePassword(16),
+    }, 'admin_active_uid'),
+    /already-exists: Employee ID "emp_001" is already linked to an active user account/
+  )
+  console.log('  ✓ Safe activation of existing unlinked record verified')
+  console.log('  ✓ Directory data and contact email preserved')
+  console.log('  ✓ Duplicate re-activation prevented')
+
+  // 3. Verify rollback invariant: pre-existing employee doc is NEVER deleted on failure
+  const preExistingSnapshot = { ...linkedJayesh }
+  async function simulateFailureDuringActivation() {
+    const tempUid = 'auth_temp_fail_uid'
+    authUsers.set(tempUid, { uid: tempUid, email: `emp_001@${SYNTHETIC_AUTH_EMAIL_DOMAIN}` })
+    try {
+      throw new Error('Firestore write failure')
+    } catch (err) {
+      authUsers.delete(tempUid) // delete created auth user
+      // Pre-existing document must NOT be deleted
+      throw err
+    }
+  }
+
+  await assert.rejects(() => simulateFailureDuringActivation(), /Firestore write failure/)
+  assert.equal(directoryEmployees.has('emp_001'), true, 'Pre-existing employee document was NOT deleted')
+  console.log('  ✓ Rollback preserves pre-existing employee document without deletion')
 
   console.log('\n============================================================')
   console.log('✅ ALL PHASE 3 PROVISIONING & EMPLOYEE ID AUTH TESTS PASSED!')

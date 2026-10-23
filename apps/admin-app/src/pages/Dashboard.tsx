@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Users,
   Monitor,
@@ -10,11 +11,72 @@ import {
   Database,
   CheckCircle2,
   Inbox,
+  Loader2,
+  ArrowRight,
+  Clock,
 } from 'lucide-react'
 import { dataService, isLiveFirestoreActive } from '../services/dataService'
 import { SkeletonCard } from '../components/Skeleton'
 import StatusBadge from '../components/StatusBadge'
 import type { Employee, Device, WorkSession, Screenshot } from '@worktrack-pro/shared'
+import { derivePresenceStatus, deriveEmployeePresence } from '@worktrack-pro/shared'
+
+function DashboardThumbnail({ screenshot, alt }: { screenshot: Screenshot; alt: string }) {
+  const [url, setUrl] = useState(screenshot.imageUrl || '')
+  const [loading, setLoading] = useState(!screenshot.imageUrl)
+
+  useEffect(() => {
+    if (screenshot.imageUrl && (screenshot.imageUrl.startsWith('http') || screenshot.imageUrl.startsWith('data:'))) {
+      setUrl(screenshot.imageUrl)
+      setLoading(false)
+      return
+    }
+
+    let isMounted = true
+    dataService
+      .getScreenshotImageUrl(screenshot)
+      .then(u => {
+        if (isMounted && u) setUrl(u)
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [screenshot])
+
+  if (loading) {
+    return (
+      <div className="w-full aspect-video bg-surface-900 flex items-center justify-center">
+        <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+      </div>
+    )
+  }
+
+  if (!url) {
+    return (
+      <div className="w-full aspect-video bg-surface-900 flex flex-col items-center justify-center text-white/30 text-[10px]">
+        <Camera className="w-4 h-4 mb-1" />
+        <span>Capture</span>
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={url}
+      alt={alt}
+      loading="lazy"
+      className="w-full aspect-video object-cover transition-transform duration-300 group-hover:scale-105"
+      onError={e => {
+        ;(e.target as HTMLImageElement).src =
+          'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180" fill="%231e293b"><rect width="320" height="180"/><text x="50%" y="50%" fill="%2394a3b8" font-size="12" text-anchor="middle" font-family="sans-serif">Capture</text></svg>'
+      }}
+    />
+  )
+}
 
 function StatCard({
   icon: Icon,
@@ -53,6 +115,7 @@ function StatCard({
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [employees, setEmployees] = useState<Employee[]>([])
   const [devices, setDevices] = useState<Device[]>([])
@@ -82,9 +145,65 @@ export default function Dashboard() {
       .finally(() => {
         setLoading(false)
       })
+
+    // Real-time live screenshot stream
+    const unsubScreenshots = dataService.subscribeToScreenshots(scrs => {
+      setScreenshots(scrs)
+    })
+
+    // Real-time employees, devices, and sessions
+    const unsubEmps = dataService.subscribeToEmployees?.(emps => {
+      setEmployees(emps)
+    }) || (() => {})
+
+    const unsubDevices = dataService.subscribeToDevices?.(devs => {
+      setDevices(devs)
+    }) || (() => {})
+
+    const unsubSessions = dataService.subscribeToSessions?.(allSess => {
+      setSessions(allSess.filter(s => s.status === 'working' || s.status === 'on_break' || s.status === 'active' || s.status === 'paused'))
+    }) || (() => {})
+
+    return () => {
+      if (typeof unsubScreenshots === 'function') unsubScreenshots()
+      if (typeof unsubEmps === 'function') unsubEmps()
+      if (typeof unsubDevices === 'function') unsubDevices()
+      if (typeof unsubSessions === 'function') unsubSessions()
+    }
   }, [])
 
-  const onlineDevices = devices.filter(d => d.status === 'online').length
+  const [currentTime, setCurrentTime] = useState(new Date())
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 30000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const onlineDevices = devices.filter(d => {
+    if (d.approvalStatus && d.approvalStatus !== 'approved') return false
+    const hb = d.lastHeartbeat || d.lastSeen
+    return derivePresenceStatus(hb, currentTime) === 'online'
+  }).length
+
+  // An active work session must belong to today and to an employee who is currently online with an active approved device
+  const activeSessions = sessions.filter(s => {
+    if (s.status !== 'working' && s.status !== 'active' && s.status !== 'on_break' && s.status !== 'paused') {
+      return false
+    }
+    if (s.endedAt) return false
+    // Stale sessions from previous days must not be counted as active today
+    const sDate = s.startedAt instanceof Date ? s.startedAt : new Date(s.startedAt)
+    if (sDate.toDateString() !== currentTime.toDateString()) {
+      return false
+    }
+    const empDevices = devices.filter(d => d.employeeId === s.employeeId)
+    return deriveEmployeePresence(empDevices, undefined, currentTime) === 'online'
+  })
+
+  const todayScreenshots = screenshots.filter(s => {
+    const sDate = s.takenAt instanceof Date ? s.takenAt : new Date(s.takenAt)
+    return sDate.toDateString() === currentTime.toDateString()
+  })
   const recentScreenshots = screenshots.slice(0, 6)
 
   if (loading) {
@@ -118,15 +237,15 @@ export default function Dashboard() {
         <StatCard
           icon={Activity}
           label="Active Sessions"
-          value={sessions.length}
-          sub="Working right now"
+          value={activeSessions.length}
+          sub={activeSessions.length > 0 ? 'Working right now' : 'No active sessions'}
           color="accent"
         />
         <StatCard
           icon={Camera}
           label="Screenshots Today"
-          value={screenshots.length}
-          sub={screenshots.length > 0 ? 'Across active sessions' : 'No captures today'}
+          value={todayScreenshots.length}
+          sub={todayScreenshots.length > 0 ? 'Across active sessions' : 'No captures today'}
           color="warning"
         />
       </div>
@@ -164,8 +283,13 @@ export default function Dashboard() {
           ) : (
             <div className="space-y-2">
               {employees.map(emp => {
-                const device = devices.find(d => d.employeeId === emp.id)
-                const session = sessions.find(s => s.employeeId === emp.id && s.status === 'active')
+                const empDevices = devices.filter(d => d.employeeId === emp.id)
+                const primaryDev = empDevices[0]
+                const presence = deriveEmployeePresence(empDevices, undefined, currentTime)
+                const empActiveSession = activeSessions.find(s => s.employeeId === emp.id)
+                const isWorking = !!empActiveSession && (empActiveSession.status === 'working' || empActiveSession.status === 'active')
+                const isOnBreak = !!empActiveSession && (empActiveSession.status === 'on_break' || empActiveSession.status === 'paused')
+
                 return (
                   <div
                     key={emp.id}
@@ -183,15 +307,21 @@ export default function Dashboard() {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-white truncate">{emp.name}</p>
                       <p className="text-xs text-white/40 truncate">
-                        {emp.department || 'General'} · {device?.name ?? 'No device'}
+                        {emp.department || 'General'} · {primaryDev?.name ?? 'No device'}
                       </p>
                     </div>
                     <div className="flex items-center gap-3 flex-shrink-0">
-                      <StatusBadge status={device?.status ?? 'offline'} />
-                      {session && (
+                      <StatusBadge status={presence} />
+                      {isWorking && (
                         <span className="stat-badge bg-accent-500/15 text-accent-400 border border-accent-500/20">
                           <Activity className="w-2.5 h-2.5" />
                           Working
+                        </span>
+                      )}
+                      {isOnBreak && (
+                        <span className="stat-badge bg-amber-500/15 text-amber-400 border border-amber-500/20">
+                          <Clock className="w-2.5 h-2.5" />
+                          On Break
                         </span>
                       )}
                     </div>
@@ -213,8 +343,8 @@ export default function Dashboard() {
               {[
                 { label: 'Registered Team', value: `${employees.length} members` },
                 { label: 'Online Devices', value: `${onlineDevices} / ${devices.length}` },
-                { label: 'Screenshots Captured', value: String(screenshots.length) },
-                { label: 'Active Work Sessions', value: String(sessions.length) },
+                { label: 'Screenshots Captured', value: String(todayScreenshots.length) },
+                { label: 'Active Work Sessions', value: String(activeSessions.length) },
               ].map(item => (
                 <div key={item.label} className="flex items-center justify-between">
                   <span className="text-xs text-white/40">{item.label}</span>
@@ -231,7 +361,7 @@ export default function Dashboard() {
                 <>
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                   <h3 className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-                    Phase 2 — Live Data Sync
+                    Cloud Telemetry Active
                   </h3>
                 </>
               ) : (
@@ -261,12 +391,19 @@ export default function Dashboard() {
       {/* Recent Screenshots */}
       <div className="glass-card p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="section-title">Recent Screenshots</h2>
-          {isLive ? (
-            <span className="text-xs text-white/40 font-mono">Real-time captures</span>
-          ) : (
-            <span className="text-xs text-amber-400/80 font-mono">⚠ Placeholder images</span>
-          )}
+          <div className="flex items-center gap-2">
+            <h2 className="section-title">Recent Screenshots</h2>
+            <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full font-mono">
+              Live Feed
+            </span>
+          </div>
+          <button
+            onClick={() => navigate('/screenshots')}
+            className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 font-medium transition-colors"
+          >
+            <span>View All ({screenshots.length})</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
         </div>
 
         {recentScreenshots.length === 0 ? (
@@ -280,26 +417,32 @@ export default function Dashboard() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
             {recentScreenshots.map(scr => {
               const emp = employees.find(e => e.id === scr.employeeId)
+              const name = scr.employeeName || emp?.name || scr.employeeId
               return (
                 <div
                   key={scr.id}
-                  className="group relative rounded-xl overflow-hidden bg-surface-700 cursor-pointer"
+                  onClick={() => navigate('/screenshots')}
+                  className="group relative rounded-xl overflow-hidden bg-surface-900 border border-white/10 hover:border-emerald-500/40 transition-all cursor-pointer shadow-md flex flex-col"
+                  title="Click to view in Screenshot Monitor"
                 >
-                  <img
-                    src={scr.imageUrl}
-                    alt={`Screenshot — ${emp?.name ?? 'Employee'}`}
-                    className="w-full aspect-video object-cover"
-                  />
-                  <div className="absolute inset-0 bg-surface-950/80 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
-                    <p className="text-xs font-medium text-white text-center px-1 truncate w-full text-center">
-                      {emp?.name ?? 'Employee'}
-                    </p>
-                    <p className="text-[10px] text-white/50">
-                      {scr.takenAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </p>
+                  <div className="relative aspect-video bg-surface-950 overflow-hidden flex items-center justify-center">
+                    <DashboardThumbnail
+                      screenshot={scr}
+                      alt={`Screenshot — ${name}`}
+                    />
+                    <div className="absolute inset-0 bg-surface-950/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1 p-2">
+                      <p className="text-xs font-semibold text-white text-center truncate w-full">
+                        {name}
+                      </p>
+                      <span className="text-[10px] text-emerald-400 font-mono">Inspect →</span>
+                    </div>
+                  </div>
+                  <div className="p-2 bg-surface-900 border-t border-white/5 flex items-center justify-between text-[10px] text-white/50 font-mono">
+                    <span className="truncate">{name}</span>
+                    <span>{scr.takenAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
                 </div>
               )

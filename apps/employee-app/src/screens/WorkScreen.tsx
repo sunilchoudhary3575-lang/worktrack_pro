@@ -102,6 +102,9 @@ export default function WorkScreen({ identity, onLogout }: Props) {
   const [backgroundSettings, setBackgroundSettings] = useState<BackgroundSettings>({ ...DEFAULT_BACKGROUND_SETTINGS })
   const [showSettingsModal, setShowSettingsModal] = useState(false)
 
+  // ─── Automatic Screenshot Cloud Monitoring State ─────────────
+  const [lastAutoCaptureAt, setLastAutoCaptureAt] = useState<string | null>(null)
+
   // ─── 1. Load Initial State & Recovery ──────────────────────
   useEffect(() => {
     loadInitialData()
@@ -152,7 +155,10 @@ export default function WorkScreen({ identity, onLogout }: Props) {
   useEffect(() => {
     const updateSchedule = async () => {
       try {
-        await scheduleService.evaluateSchedule()
+        const res = await scheduleService.evaluateSchedule()
+        if (res && res.action === 'ended') {
+          await loadInitialData()
+        }
         const status = await scheduleService.getScheduleStatus()
         setScheduleStatus(status)
       } catch {
@@ -162,6 +168,7 @@ export default function WorkScreen({ identity, onLogout }: Props) {
 
     updateSchedule()
     const timer = setInterval(updateSchedule, 15000)
+    const unsubCloud = scheduleService.subscribeToCloudSchedule()
 
     const api = typeof window !== 'undefined' ? (window as any).electronAPI : null
     let unlisten: (() => void) | null = null
@@ -173,6 +180,7 @@ export default function WorkScreen({ identity, onLogout }: Props) {
 
     return () => {
       clearInterval(timer)
+      unsubCloud()
       if (unlisten) unlisten()
     }
   }, [])
@@ -239,6 +247,43 @@ export default function WorkScreen({ identity, onLogout }: Props) {
     const timer = setInterval(update, 1000)
     return () => clearInterval(timer)
   }, [activeSession, sessionState])
+
+  // ─── Automatic Screenshot Monitoring & Cloud Delivery ───────
+  useEffect(() => {
+    const isWorkingSession = sessionState === 'working'
+    const isDeviceApproved = regRecord?.status === 'approved'
+    const isAuthorized =
+      (preAuthRecord && preAuthRecord.status === 'granted') ||
+      Boolean(activeApprovedRequest && (activeApprovedRequest.status === 'approved' || activeApprovedRequest.status === 'active'))
+
+    const shouldAutoCapture = isWorkingSession && activeSession && isDeviceApproved && isAuthorized
+
+    if (shouldAutoCapture) {
+      screenshotService.startAutoCapture({
+        deviceId: identity.deviceId,
+        sessionId: activeSession.id,
+        employeeId: identity.employeeId,
+        employeeName: identity.employeeName,
+        intervalSeconds: 300,
+        checkScheduleHours: true,
+        onCapture: (res) => {
+          if (res.success && res.data) {
+            setLastAutoCaptureAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+            screenshotService.getRecentScreenshots(20).then(setRecentScreenshots).catch(() => {})
+          }
+        },
+        onUploadSuccess: () => {
+          showToast('📸 Screenshot recorded and delivered to cloud storage.')
+        },
+      })
+    } else {
+      screenshotService.stopAutoCapture()
+    }
+
+    return () => {
+      screenshotService.stopAutoCapture()
+    }
+  }, [sessionState, activeSession?.id, regRecord?.status, preAuthRecord?.status, activeApprovedRequest?.status, identity.deviceId, identity.employeeId, identity.employeeName])
 
   const showToast = (msg: string) => {
     setToastMessage(msg)
@@ -928,27 +973,37 @@ export default function WorkScreen({ identity, onLogout }: Props) {
               </div>
             )}
 
-            {/* Phase 8 / 7: Manual Verification Capture (No gallery or history exposed) */}
+            {/* Automated Screenshot Cloud Delivery Status Card */}
             {isWorking && (
-              <button
-                id="btn-take-screenshot"
-                onClick={handleTakeScreenshot}
-                disabled={isCapturing || actionInProgress || !isApproved}
-                className="w-full py-2.5 px-3 rounded-xl bg-surface-900 hover:bg-surface-800 border border-brand-500/30 text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition-all shadow-[0_0_12px_rgba(16,185,129,0.15)] disabled:opacity-40 disabled:cursor-not-allowed"
-                title="Capture desktop screenshot for local verification"
+              <div
+                id="auto-screenshot-status-card"
+                className="p-3.5 rounded-xl bg-surface-900/90 border border-emerald-500/30 text-xs space-y-2 shadow-[0_0_12px_rgba(16,185,129,0.1)]"
               >
-                {isCapturing ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-400" />
-                    <span>Capturing Verification Screen...</span>
-                  </>
-                ) : (
-                  <>
-                    <Camera className="w-3.5 h-3.5 text-brand-400" />
-                    <span>Capture Verification Screen</span>
-                  </>
-                )}
-              </button>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-semibold text-emerald-400">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>Automated Cloud Delivery Active</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-white/50">Every 5 min</span>
+                </div>
+                <p className="text-[11px] text-white/70 leading-relaxed">
+                  Desktop activity is automatically captured and encrypted to cloud storage during active work. No manual action required.
+                </p>
+                <div className="flex items-center justify-between pt-1.5 border-t border-white/5 text-[10px] text-white/40">
+                  <span>Last cloud delivery: <strong className="text-white/70">{lastAutoCaptureAt || 'Session initiated'}</strong></span>
+                  <span className="text-emerald-400/90 font-medium">✓ Secure Storage</span>
+                </div>
+              </div>
+            )}
+
+            {isOnBreak && (
+              <div
+                id="auto-screenshot-paused-banner"
+                className="p-3 rounded-xl bg-surface-900/80 border border-amber-500/20 text-xs text-amber-200/80 flex items-center gap-2"
+              >
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                <span>Monitoring paused during breaks. No screenshots are recorded.</span>
+              </div>
             )}
           </div>
         </div>

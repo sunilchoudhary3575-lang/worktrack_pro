@@ -11,9 +11,12 @@ import {
   ShieldAlert,
   ChevronRight,
   LogOut,
+  Sun,
+  Moon,
 } from 'lucide-react'
 import WindowControls from './WindowControls'
 import { UserAccount } from '@worktrack-pro/shared'
+import { useTheme } from '../context/ThemeContext'
 
 const NAV_ITEMS = [
   { to: '/dashboard',   icon: LayoutDashboard, label: 'Dashboard' },
@@ -34,6 +37,7 @@ export interface LayoutProps {
 
 export default function Layout({ user, isDemo = false, onSignOut }: LayoutProps) {
   const location = useLocation()
+  const { theme, toggleTheme } = useTheme()
 
   const currentPage = NAV_ITEMS.find(n =>
     location.pathname.startsWith(n.to)
@@ -98,6 +102,28 @@ export default function Layout({ user, isDemo = false, onSignOut }: LayoutProps)
           <div className="titlebar-no-drag flex items-center gap-4 w-full">
             <h1 className="text-sm font-semibold text-white">{currentPage}</h1>
             <div className="ml-auto flex items-center gap-3">
+              {/* Light / Dark Mode Toggle Button */}
+              <button
+                id="btn-theme-toggle"
+                type="button"
+                onClick={toggleTheme}
+                title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+                aria-label={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium text-white/70 hover:text-white bg-surface-800/80 hover:bg-surface-700 border border-white/10 transition-all cursor-pointer shadow-sm active:scale-95"
+              >
+                {theme === 'dark' ? (
+                  <>
+                    <Sun className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="hidden sm:inline text-[11px]">Light</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon className="w-3.5 h-3.5 text-indigo-500" />
+                    <span className="hidden sm:inline text-[11px]">Dark</span>
+                  </>
+                )}
+              </button>
+
               {/* Mode indicator */}
               <span className={`text-[10px] px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5 ${
                 isDemo

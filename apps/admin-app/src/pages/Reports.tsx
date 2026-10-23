@@ -13,12 +13,10 @@ import {
   Sparkles,
   FileText,
 } from 'lucide-react'
-import {
-  dataService,
-  MOCK_EMPLOYEES,
-} from '../services/dataService'
+import { dataService } from '../services/dataService'
 import { SkeletonCard } from '../components/Skeleton'
-import type { DailySummary, AppUsage, WebUsage, ActivityMetric } from '@worktrack-pro/shared'
+import type { DailySummary, AppUsage, WebUsage, ActivityMetric, Employee } from '@worktrack-pro/shared'
+import { useTheme } from '../context/ThemeContext'
 import {
   BarChart,
   Bar,
@@ -93,13 +91,23 @@ function exportPDFMock() {
 }
 
 export default function Reports() {
+  const { theme } = useTheme()
   const [activeTab, setActiveTab] = useState<'overview' | 'productivity' | 'apps'>('overview')
   const [loading, setLoading] = useState(true)
   const [summaries, setSummaries] = useState<DailySummary[]>([])
   const [filterEmployee, setFilterEmployee] = useState('')
+  const [employees, setEmployees] = useState<Employee[]>([])
   const [appUsages, setAppUsages] = useState<AppUsage[]>([])
   const [webUsages, setWebUsages] = useState<WebUsage[]>([])
   const [activityMetrics, setActivityMetrics] = useState<ActivityMetric[]>([])
+
+  useEffect(() => {
+    dataService.getEmployees().then(emps => {
+      setEmployees(emps || [])
+    }).catch(() => {
+      setEmployees([])
+    })
+  }, [])
 
   useEffect(() => {
     setLoading(true)
@@ -184,7 +192,7 @@ export default function Reports() {
             className="px-3 py-1.5 rounded-xl bg-surface-700 border border-white/10 text-xs text-white/80 outline-none cursor-pointer"
           >
             <option value="">All Employees</option>
-            {MOCK_EMPLOYEES.map(emp => (
+            {employees.map(emp => (
               <option key={emp.id} value={emp.id}>{emp.name}</option>
             ))}
           </select>
@@ -253,19 +261,30 @@ export default function Reports() {
                 <h2 className="section-title">Daily Work Hours (Last 7 Days)</h2>
                 <p className="text-xs text-white/40">Aggregated session durations across active agents</p>
               </div>
-              <span className="text-xs text-white/30 font-mono">⚠ Mock Data</span>
+              <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live Firestore Telemetry
+              </span>
             </div>
             {loading ? (
               <div className="h-48 shimmer rounded-xl" />
+            ) : chartData.length === 0 ? (
+              <div className="h-48 flex flex-col items-center justify-center text-center p-6 text-white/40">
+                <Clock className="w-8 h-8 mb-2 opacity-40 text-brand-400" />
+                <p className="text-sm font-medium text-white/80">No work sessions recorded yet</p>
+                <p className="text-xs text-white/40 mt-0.5">Real session hours will automatically plot here as employees log time.</p>
+              </div>
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 12 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 12 }} axisLine={false} tickLine={false} unit="h" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={theme === 'light' ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.05)'} />
+                  <XAxis dataKey="date" tick={{ fill: theme === 'light' ? '#64748b' : 'rgba(255,255,255,0.3)', fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: theme === 'light' ? '#64748b' : 'rgba(255,255,255,0.3)', fontSize: 12 }} axisLine={false} tickLine={false} unit="h" />
                   <Tooltip
-                    contentStyle={{ background: '#16162a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, color: 'white', fontSize: 13 }}
-                    cursor={{ fill: 'rgba(107,107,245,0.1)' }}
+                    contentStyle={theme === 'light'
+                      ? { background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, color: '#0f172a', fontSize: 13, boxShadow: '0 4px 14px rgba(0,0,0,0.08)' }
+                      : { background: '#16162a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, color: 'white', fontSize: 13 }}
+                    cursor={{ fill: theme === 'light' ? 'rgba(107,107,245,0.08)' : 'rgba(107,107,245,0.1)' }}
                   />
                   <Bar dataKey="hours" radius={[6, 6, 0, 0]}>
                     {chartData.map((_, index) => (
@@ -290,18 +309,26 @@ export default function Reports() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {summaries.slice(0, 15).map((s, i) => {
-                    const emp = MOCK_EMPLOYEES.find(e => e.id === s.employeeId)
-                    return (
-                      <tr key={i} className="hover:bg-surface-700/30 transition-colors">
-                        <td className="px-4 py-3 text-sm font-mono text-white/60">{s.date}</td>
-                        <td className="px-4 py-3 text-sm text-white font-medium">{emp?.name ?? s.employeeId}</td>
-                        <td className="px-4 py-3 text-sm text-white/60">{s.sessionCount}</td>
-                        <td className="px-4 py-3 text-sm font-mono text-white/80">{formatHours(s.totalSessionSeconds)}</td>
-                        <td className="px-4 py-3 text-sm text-white/60">{s.screenshotCount}</td>
-                      </tr>
-                    )
-                  })}
+                  {summaries.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-xs text-white/40">
+                        No work session records found in Cloud Firestore.
+                      </td>
+                    </tr>
+                  ) : (
+                    summaries.slice(0, 15).map((s, i) => {
+                      const emp = employees.find(e => e.id === s.employeeId)
+                      return (
+                        <tr key={i} className="hover:bg-surface-700/30 transition-colors">
+                          <td className="px-4 py-3 text-sm font-mono text-white/60">{s.date}</td>
+                          <td className="px-4 py-3 text-sm text-white font-medium">{emp?.name ?? s.employeeId}</td>
+                          <td className="px-4 py-3 text-sm text-white/60">{s.sessionCount}</td>
+                          <td className="px-4 py-3 text-sm font-mono text-white/80">{formatHours(s.totalSessionSeconds)}</td>
+                          <td className="px-4 py-3 text-sm text-white/60">{s.screenshotCount}</td>
+                        </tr>
+                      )
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
@@ -380,11 +407,13 @@ export default function Reports() {
                     <stop offset="95%" stopColor="#eab308" stopOpacity={0.0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis dataKey="timestamp" tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 12 }} />
-                <YAxis tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 12 }} unit="m" />
+                <CartesianGrid strokeDasharray="3 3" stroke={theme === 'light' ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.05)'} />
+                <XAxis dataKey="timestamp" tick={{ fill: theme === 'light' ? '#64748b' : 'rgba(255,255,255,0.4)', fontSize: 12 }} />
+                <YAxis tick={{ fill: theme === 'light' ? '#64748b' : 'rgba(255,255,255,0.4)', fontSize: 12 }} unit="m" />
                 <Tooltip
-                  contentStyle={{ background: '#16162a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, color: 'white' }}
+                  contentStyle={theme === 'light'
+                    ? { background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, color: '#0f172a', fontSize: 13, boxShadow: '0 4px 14px rgba(0,0,0,0.08)' }
+                    : { background: '#16162a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, color: 'white' }}
                 />
                 <Area type="monotone" dataKey="activeMinutes" stroke="#6b6bf5" fillOpacity={1} fill="url(#activeGrad)" strokeWidth={2} />
                 <Area type="monotone" dataKey="idleMinutes" stroke="#eab308" fillOpacity={1} fill="url(#idleGrad)" strokeWidth={2} />
@@ -410,30 +439,36 @@ export default function Reports() {
             </div>
 
             <div className="space-y-3">
-              {appUsages.map(app => (
-                <div key={app.id} className="p-3 rounded-xl bg-surface-700/50 border border-white/5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-white">{app.appName}</p>
-                      <p className="text-[11px] text-white/40 truncate max-w-xs">{app.windowTitle}</p>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs font-mono font-bold text-white">{formatHours(app.durationSeconds)}</span>
-                      <p className="text-[10px] text-success-400">{app.productivityScore}% score</p>
-                    </div>
-                  </div>
-
-                  {/* Progress bar */}
-                  <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${
-                        app.category === 'productive' ? 'bg-brand-500' : 'bg-warning-500'
-                      }`}
-                      style={{ width: `${Math.min(100, (app.durationSeconds / 18000) * 100)}%` }}
-                    />
-                  </div>
+              {appUsages.length === 0 ? (
+                <div className="py-12 text-center text-white/40 text-xs">
+                  No application activity logged yet.
                 </div>
-              ))}
+              ) : (
+                appUsages.map(app => (
+                  <div key={app.id} className="p-3 rounded-xl bg-surface-700/50 border border-white/5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-white">{app.appName}</p>
+                        <p className="text-[11px] text-white/40 truncate max-w-xs">{app.windowTitle}</p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs font-mono font-bold text-white">{formatHours(app.durationSeconds)}</span>
+                        <p className="text-[10px] text-success-400">{app.productivityScore}% score</p>
+                      </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          app.category === 'productive' ? 'bg-brand-500' : 'bg-warning-500'
+                        }`}
+                        style={{ width: `${Math.min(100, (app.durationSeconds / 18000) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
@@ -450,30 +485,36 @@ export default function Reports() {
             </div>
 
             <div className="space-y-3">
-              {webUsages.map(web => (
-                <div key={web.id} className="p-3 rounded-xl bg-surface-700/50 border border-white/5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-white font-mono">{web.domain}</p>
-                      <p className="text-[11px] text-white/40 truncate max-w-xs">{web.title}</p>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs font-mono font-bold text-white">{formatHours(web.durationSeconds)}</span>
-                      <p className="text-[10px] text-white/40">{web.visitCount} visits</p>
-                    </div>
-                  </div>
-
-                  {/* Progress bar */}
-                  <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${
-                        web.category === 'productive' ? 'bg-accent-500' : 'bg-warning-500'
-                      }`}
-                      style={{ width: `${Math.min(100, (web.durationSeconds / 10000) * 100)}%` }}
-                    />
-                  </div>
+              {webUsages.length === 0 ? (
+                <div className="py-12 text-center text-white/40 text-xs">
+                  No browser activity logged yet.
                 </div>
-              ))}
+              ) : (
+                webUsages.map(web => (
+                  <div key={web.id} className="p-3 rounded-xl bg-surface-700/50 border border-white/5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-white font-mono">{web.domain}</p>
+                        <p className="text-[11px] text-white/40 truncate max-w-xs">{web.title}</p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs font-mono font-bold text-white">{formatHours(web.durationSeconds)}</span>
+                        <p className="text-[10px] text-white/40">{web.visitCount} visits</p>
+                      </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          web.category === 'productive' ? 'bg-accent-500' : 'bg-warning-500'
+                        }`}
+                        style={{ width: `${Math.min(100, (web.durationSeconds / 10000) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

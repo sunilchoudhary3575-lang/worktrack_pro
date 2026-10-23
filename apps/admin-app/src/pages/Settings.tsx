@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Save, RotateCcw, Clock, Shield, Calendar, Database, CheckCircle } from 'lucide-react'
+import { Save, RotateCcw, Clock, Shield, Calendar, Database, CheckCircle, Sun, Moon } from 'lucide-react'
 import { dataService } from '../services/dataService'
 import type { MonitoringSettings } from '@worktrack-pro/shared'
+import { useTheme } from '../context/ThemeContext'
 
 const DAY_OPTIONS: Array<{ key: string; label: string }> = [
   { key: 'monday', label: 'Mon' },
@@ -14,6 +15,7 @@ const DAY_OPTIONS: Array<{ key: string; label: string }> = [
 ]
 
 export default function Settings() {
+  const { theme, setTheme } = useTheme()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -47,6 +49,51 @@ export default function Settings() {
 
   return (
     <div className="max-w-2xl space-y-5 animate-fade-in">
+      {/* Theme / Appearance Settings */}
+      <div className="glass-card p-6 space-y-4">
+        <div className="flex items-center gap-2 mb-1">
+          <Sun className="w-4 h-4 text-amber-400" />
+          <h2 className="section-title">Appearance & Theme</h2>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-semibold text-white/70 uppercase tracking-wider">
+            Admin Console Mode
+          </label>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              id="theme-select-dark"
+              onClick={() => setTheme('dark')}
+              className={`flex-1 py-3 px-4 rounded-xl text-xs font-medium border flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                theme === 'dark'
+                  ? 'bg-brand-600 text-white border-brand-500 shadow-glow-brand font-semibold'
+                  : 'bg-surface-700/60 border-white/10 text-white/70 hover:text-white hover:bg-surface-700'
+              }`}
+            >
+              <Moon className="w-4 h-4 text-indigo-400" />
+              <span>Dark Mode</span>
+            </button>
+            <button
+              type="button"
+              id="theme-select-light"
+              onClick={() => setTheme('light')}
+              className={`flex-1 py-3 px-4 rounded-xl text-xs font-medium border flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                theme === 'light'
+                  ? 'bg-brand-600 text-white border-brand-500 shadow-glow-brand font-semibold'
+                  : 'bg-surface-700/60 border-white/10 text-white/70 hover:text-white hover:bg-surface-700'
+              }`}
+            >
+              <Sun className="w-4 h-4 text-amber-400" />
+              <span>Light Mode</span>
+            </button>
+          </div>
+          <p className="text-[11px] text-white/60 pt-1">
+            Toggle between high-contrast Dark Mode and modern Light Mode across the entire executive admin console.
+          </p>
+        </div>
+      </div>
+
       {/* Screenshot interval */}
       <div className="glass-card p-6 space-y-4">
         <div className="flex items-center gap-2 mb-1">
@@ -55,7 +102,7 @@ export default function Settings() {
         </div>
 
         <div className="space-y-1">
-          <label className="text-xs font-medium text-white/50 uppercase tracking-wider">
+          <label className="text-xs font-semibold text-white/70 uppercase tracking-wider">
             Screenshot Interval
           </label>
           <div className="flex items-center gap-3">
@@ -78,7 +125,7 @@ export default function Settings() {
         </div>
 
         <div className="space-y-1">
-          <label className="text-xs font-medium text-white/50 uppercase tracking-wider">Quality</label>
+          <label className="text-xs font-semibold text-white/70 uppercase tracking-wider">Quality</label>
           <div className="flex gap-2">
             {(['low', 'medium', 'high'] as const).map(q => (
               <button
@@ -87,8 +134,8 @@ export default function Settings() {
                 onClick={() => setSettings({ ...settings, screenshotQuality: q })}
                 className={`flex-1 py-2 rounded-xl text-sm font-medium capitalize border transition-all ${
                   settings.screenshotQuality === q
-                    ? 'bg-brand-600/20 border-brand-500/40 text-brand-300'
-                    : 'bg-surface-700 border-white/10 text-white/40 hover:text-white/70'
+                    ? 'bg-brand-600 text-white border-brand-500 shadow-sm font-semibold'
+                    : 'bg-surface-700/80 border-white/10 text-white/70 hover:text-white'
                 }`}
               >
                 {q}
@@ -106,7 +153,7 @@ export default function Settings() {
         </div>
 
         <div className="space-y-1">
-          <label className="text-xs font-medium text-white/50 uppercase tracking-wider">Active Days</label>
+          <label className="text-xs font-semibold text-white/70 uppercase tracking-wider">Active Days</label>
           <div className="flex gap-2">
             {DAY_OPTIONS.map(({ key, label }) => (
               <button
@@ -115,8 +162,8 @@ export default function Settings() {
                 onClick={() => toggleDay(key)}
                 className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-all ${
                   settings.schedule.enabledDays.includes(key as any)
-                    ? 'bg-brand-600/20 border-brand-500/40 text-brand-300'
-                    : 'bg-surface-700 border-white/10 text-white/30 hover:text-white/60'
+                    ? 'bg-brand-600 text-white border-brand-500 shadow-sm font-semibold'
+                    : 'bg-surface-700/80 border-white/10 text-white/70 hover:text-white'
                 }`}
               >
                 {label}

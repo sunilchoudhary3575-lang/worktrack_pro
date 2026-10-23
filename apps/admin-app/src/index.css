@@ -4,6 +4,44 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Default Dark Mode surfaces (identical to original hex values) */
+  --surface-950: 10 10 20;   /* #0a0a14 */
+  --surface-900: 16 16 30;   /* #10101e */
+  --surface-800: 22 22 42;   /* #16162a */
+  --surface-700: 30 30 53;   /* #1e1e35 */
+  --surface-600: 37 37 66;   /* #252542 */
+  --surface-500: 46 46 82;   /* #2e2e52 */
+  --body-bg: #0a0a14;
+  --body-color: #e2e2ff;
+  --scrollbar-track: #10101e;
+  --scrollbar-thumb: #2e2e52;
+  --scrollbar-hover: #5656ea;
+  --glass-bg: rgba(22, 22, 42, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.05);
+  --glass-hover-bg: rgba(30, 30, 53, 0.6);
+  --glass-hover-border: rgba(107, 107, 245, 0.2);
+}
+
+html.light {
+  /* Light Mode surfaces */
+  --surface-950: 241 245 249; /* #f1f5f9 - clear soft gray canvas */
+  --surface-900: 255 255 255; /* #ffffff - sidebar / header */
+  --surface-800: 255 255 255; /* #ffffff - cards */
+  --surface-700: 248 250 252; /* #f8fafc - row hover / inputs / secondary */
+  --surface-600: 226 232 240; /* #e2e8f0 - subtle borders / hover */
+  --surface-500: 203 213 225; /* #cbd5e1 - borders */
+  --body-bg: #f1f5f9;
+  --body-color: #0f172a;
+  --scrollbar-track: #f1f5f9;
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-hover: #94a3b8;
+  --glass-bg: #ffffff;
+  --glass-border: #e2e8f0;
+  --glass-hover-bg: #ffffff;
+  --glass-hover-border: #818cf8;
+}
+
 @layer base {
   * {
     box-sizing: border-box;
@@ -19,10 +57,11 @@
 
   body {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    background-color: #0a0a14;
-    color: #e2e2ff;
+    background-color: var(--body-bg);
+    color: var(--body-color);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    transition: background-color 0.15s ease, color 0.15s ease;
   }
 
   /* Custom scrollbar */
@@ -31,20 +70,25 @@
     height: 6px;
   }
   ::-webkit-scrollbar-track {
-    background: #10101e;
+    background: var(--scrollbar-track);
   }
   ::-webkit-scrollbar-thumb {
-    background: #2e2e52;
+    background: var(--scrollbar-thumb);
     border-radius: 3px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #5656ea;
+    background: var(--scrollbar-hover);
   }
 
   /* Selection */
   ::selection {
     background-color: rgba(107, 107, 245, 0.3);
     color: #e2e2ff;
+  }
+
+  html.light ::selection {
+    background-color: rgba(107, 107, 245, 0.2);
+    color: #1e1e35;
   }
 }
 
@@ -150,4 +194,347 @@
 }
 .titlebar-no-drag {
   -webkit-app-region: no-drag;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   LIGHT MODE: HIGH-CONTRAST & HIGH-VISIBILITY RULES
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Structural Layout: Sidebar & Top Header boundaries */
+html.light aside {
+  background-color: #ffffff !important;
+  border-right: 1px solid #e2e8f0 !important;
+}
+
+html.light header {
+  background-color: rgba(255, 255, 255, 0.96) !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+/* Modal Dialog Backdrops */
+html.light .fixed.inset-0 {
+  background-color: rgba(15, 23, 42, 0.55) !important;
+}
+
+/* Cards & Surface Containers */
+html.light .glass-card {
+  background-color: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05) !important;
+}
+
+html.light .glass-card-hover:hover {
+  background-color: #ffffff !important;
+  border-color: #a5b4fc !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* ── TEXT & ICON VISIBILITY IN LIGHT MODE ─────────────────────── */
+/* Every Tailwind white text variant must be dark & clearly legible */
+html.light .text-white,
+html.light [class*="text-white"] {
+  color: #0f172a !important;
+}
+
+html.light .text-white\/90 {
+  color: #0f172a !important;
+}
+
+html.light .text-white\/80 {
+  color: #1e293b !important;
+}
+
+html.light .text-white\/70 {
+  color: #334155 !important;
+}
+
+html.light .text-white\/60 {
+  color: #475569 !important;
+}
+
+html.light .text-white\/50 {
+  color: #64748b !important;
+}
+
+html.light .text-white\/40 {
+  color: #64748b !important;
+}
+
+html.light .text-white\/30 {
+  color: #64748b !important;
+}
+
+html.light .text-white\/20 {
+  color: #94a3b8 !important;
+}
+
+html.light .text-white\/10 {
+  color: #94a3b8 !important;
+}
+
+html.light .text-white\/5 {
+  color: #cbd5e1 !important;
+}
+
+/* SVG icons inheriting currentColor automatically become sharp & visible */
+html.light svg {
+  color: inherit;
+}
+
+/* Hover text visibility */
+html.light .hover\:text-white:hover {
+  color: #0f172a !important;
+}
+
+html.light .group:hover .group-hover\:text-white {
+  color: #0f172a !important;
+}
+
+html.light .group:hover .group-hover\:text-brand-300 {
+  color: #4338ca !important;
+}
+
+html.light .hover\:text-white\/80:hover {
+  color: #1e293b !important;
+}
+
+html.light .hover\:text-white\/70:hover {
+  color: #334155 !important;
+}
+
+/* Sidebar navigation */
+html.light .nav-item {
+  color: #475569 !important;
+}
+
+html.light .nav-item svg {
+  color: #64748b !important;
+}
+
+html.light .nav-item:hover {
+  color: #0f172a !important;
+  background-color: #f1f5f9 !important;
+}
+
+html.light .nav-item:hover svg {
+  color: #0f172a !important;
+}
+
+html.light .nav-item-active {
+  color: #4338ca !important;
+  background-color: #eef2ff !important;
+  border: 1px solid #c7d2fe !important;
+  font-weight: 600 !important;
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.12) !important;
+}
+
+html.light .nav-item-active svg {
+  color: #4338ca !important;
+}
+
+/* Form Inputs */
+html.light .input-field {
+  background-color: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+html.light .input-field::placeholder,
+html.light [class*="placeholder:text-white"]::placeholder {
+  color: #94a3b8 !important;
+}
+
+html.light .input-field:focus {
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2) !important;
+}
+
+/* Secondary Button */
+html.light .btn-secondary {
+  background-color: #f1f5f9 !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #334155 !important;
+}
+
+html.light .btn-secondary:hover {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+/* Table Header & Rows */
+html.light table thead tr {
+  background-color: #f8fafc !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+html.light table thead th {
+  color: #475569 !important;
+  font-weight: 600 !important;
+}
+
+html.light table tbody tr {
+  border-color: #f1f5f9 !important;
+}
+
+html.light table tbody tr:hover {
+  background-color: #f8fafc !important;
+}
+
+/* Subtle white/5, white/10 overlays */
+html.light .bg-white\/5 {
+  background-color: #f1f5f9 !important;
+  border-color: #e2e8f0 !important;
+}
+
+html.light .bg-white\/10 {
+  background-color: #e2e8f0 !important;
+  border-color: #cbd5e1 !important;
+}
+
+html.light .bg-white\/20 {
+  background-color: #cbd5e1 !important;
+}
+
+/* Borders & Dividers */
+html.light .border-white\/5,
+html.light .border-white\/10,
+html.light [class*="border-white/"] {
+  border-color: #e2e8f0 !important;
+}
+
+html.light .border-white\/20 {
+  border-color: #cbd5e1 !important;
+}
+
+html.light .divide-white\/5 > :not([hidden]) ~ :not([hidden]),
+html.light .divide-white\/10 > :not([hidden]) ~ :not([hidden]),
+html.light [class*="divide-white/"] > :not([hidden]) ~ :not([hidden]) {
+  border-color: #f1f5f9 !important;
+}
+
+/* Section titles */
+html.light .section-title {
+  color: #0f172a !important;
+}
+
+/* Brand, status and accent colors tuned for high contrast on light mode */
+html.light .text-emerald-400 {
+  color: #047857 !important;
+}
+html.light .bg-emerald-500\/10,
+html.light .bg-emerald-500\/15 {
+  background-color: #ecfdf5 !important;
+  border-color: #a7f3d0 !important;
+}
+
+html.light .text-rose-400,
+html.light .text-danger-400 {
+  color: #b91c1c !important;
+}
+html.light .bg-rose-500\/10,
+html.light .bg-rose-500\/15,
+html.light .bg-danger-500\/15 {
+  background-color: #fff1f2 !important;
+  border-color: #fecdd3 !important;
+}
+
+html.light .text-amber-400,
+html.light .text-amber-300 {
+  color: #b45309 !important;
+}
+html.light .bg-amber-500\/10,
+html.light .bg-amber-500\/15 {
+  background-color: #fffbeb !important;
+  border-color: #fde68a !important;
+}
+
+html.light .text-brand-300,
+html.light .text-brand-400 {
+  color: #4338ca !important;
+}
+html.light .bg-brand-500\/10,
+html.light .bg-brand-500\/15,
+html.light .bg-brand-600\/20 {
+  background-color: #eef2ff !important;
+  border-color: #c7d2fe !important;
+}
+
+html.light .text-accent-400,
+html.light .text-accent-500 {
+  color: #0369a1 !important;
+}
+html.light .bg-accent-500\/10,
+html.light .bg-accent-500\/15 {
+  background-color: #f0f9ff !important;
+  border-color: #bae6fd !important;
+}
+
+/* Select and Option elements (High Contrast for Windows/Chromium Dropdowns) */
+select {
+  color-scheme: dark;
+}
+
+select option {
+  background-color: #10101e !important;
+  color: #ffffff !important;
+}
+
+html.light select {
+  color-scheme: light;
+  color: #0f172a !important;
+}
+
+html.light select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+html.light select option:checked {
+  background-color: #eef2ff !important;
+  color: #4338ca !important;
+}
+
+/* Window controls in light mode */
+html.light .titlebar-no-drag button {
+  color: #475569 !important;
+}
+html.light .titlebar-no-drag button:hover {
+  color: #0f172a !important;
+  background-color: rgba(0, 0, 0, 0.06) !important;
+}
+
+/* Light mode tinted badges and pills: text must be bold dark indigo, NOT white */
+html.light .bg-brand-600\/20,
+html.light .bg-brand-600\/25,
+html.light .bg-brand-500\/10,
+html.light .bg-brand-500\/15 {
+  background-color: #eef2ff !important;
+  border-color: #c7d2fe !important;
+  color: #4338ca !important;
+}
+html.light .bg-brand-600\/20 *,
+html.light .bg-brand-600\/25 *,
+html.light .bg-brand-500\/10 *,
+html.light .bg-brand-500\/15 * {
+  color: #4338ca !important;
+}
+
+/* Elements that must PRESERVE true white text: ONLY true solid buttons */
+html.light .btn-primary,
+html.light .btn-primary *,
+html.light .btn-danger,
+html.light .btn-danger *,
+html.light .bg-brand-600:not([class*="/"]),
+html.light .bg-brand-600:not([class*="/"]) *,
+html.light .bg-brand-700:not([class*="/"]),
+html.light .bg-brand-700:not([class*="/"]) *,
+html.light .bg-danger-600,
+html.light .bg-danger-600 *,
+html.light .bg-emerald-600,
+html.light .bg-emerald-600 *,
+html.light .hover\:bg-red-600:hover,
+html.light .hover\:bg-red-600:hover *,
+html.light .keep-white,
+html.light .keep-white * {
+  color: #ffffff !important;
 }
