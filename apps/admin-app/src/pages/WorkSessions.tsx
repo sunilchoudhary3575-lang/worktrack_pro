@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Clock, Play, Square, Filter, Database, Calendar, ArrowUpDown, ArrowDown, ArrowUp, X } from 'lucide-react'
-import { dataService, isLiveFirestoreActive, MOCK_EMPLOYEES } from '../services/dataService'
+import { dataService, isLiveFirestoreActive, MOCK_EMPLOYEES, MOCK_DEVICES } from '../services/dataService'
 import { SkeletonTable } from '../components/Skeleton'
 import StatusBadge from '../components/StatusBadge'
-import type { WorkSession, Employee } from '@worktrack-pro/shared'
+import type { WorkSession, Employee, Device } from '@worktrack-pro/shared'
+import { deriveEmployeePresence } from '@worktrack-pro/shared'
 
 function formatDuration(seconds?: number): string {
   if (!seconds) return '—'
@@ -12,21 +13,22 @@ function formatDuration(seconds?: number): string {
   return `${h}h ${m}m`
 }
 
-function calcDuration(session: WorkSession): number {
-  const end = session.endedAt ?? new Date()
-  const start = session.startedAt instanceof Date ? session.startedAt : new Date(session.startedAt)
-  return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000))
-}
-
 export default function WorkSessions() {
   const [loading, setLoading] = useState(true)
   const [sessions, setSessions] = useState<WorkSession[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
+  const [devices, setDevices] = useState<Device[]>([])
+  const [currentTime, setCurrentTime] = useState(new Date())
   const [filterEmployee, setFilterEmployee] = useState('')
   const [filterDate, setFilterDate] = useState('')
   const [sortBy, setSortBy] = useState<'started' | 'duration'>('started')
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc')
   const [isLive, setIsLive] = useState(false)
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 30000)
+    return () => clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     setIsLive(isLiveFirestoreActive())
@@ -39,6 +41,18 @@ export default function WorkSessions() {
     }).catch(() => {
       setEmployees(MOCK_EMPLOYEES)
     })
+
+    const unsubDevices = dataService.subscribeToDevices?.(devs => {
+      if (devs && devs.length > 0) {
+        setDevices(devs)
+      } else {
+        setDevices(MOCK_DEVICES)
+      }
+    })
+
+    return () => {
+      if (typeof unsubDevices === 'function') unsubDevices()
+    }
   }, [])
 
   useEffect(() => {
@@ -69,6 +83,56 @@ export default function WorkSessions() {
     }
   }, [])
 
+  // Resolve session status, active presence and accurate duration
+  const getSessionDetails = useCallback((sess: WorkSession) => {
+    const startD = sess.startedAt instanceof Date ? sess.startedAt : new Date(sess.startedAt)
+    const endD = sess.endedAt ? (sess.endedAt instanceof Date ? sess.endedAt : new Date(sess.endedAt)) : undefined
+
+    // Check device presence
+    const empDevices = devices.filter(d => (sess.deviceId && d.id === sess.deviceId) || (sess.employeeId && d.employeeId === sess.employeeId))
+    const primaryDev = empDevices.find(d => d.id === sess.deviceId) || empDevices[0]
+    const isOnline = deriveEmployeePresence(empDevices, undefined, currentTime) === 'online'
+
+    let lastActiveTime: Date | undefined = undefined
+    if (primaryDev?.lastHeartbeat || primaryDev?.lastSeen) {
+      const hb = primaryDev.lastHeartbeat || primaryDev.lastSeen
+      lastActiveTime = hb instanceof Date ? hb : new Date(hb)
+    }
+
+    let effectiveStatus: string = sess.status
+    let isOngoing = false
+    let durationSeconds = 0
+
+    if (endD) {
+      // Concluded normally
+      effectiveStatus = sess.status === 'working' ? 'completed' : sess.status
+      durationSeconds = Math.max(0, Math.floor((endD.getTime() - startD.getTime()) / 1000))
+    } else if (isOnline) {
+      // Actively online and working/on-break
+      effectiveStatus = sess.status
+      isOngoing = true
+      durationSeconds = Math.max(0, Math.floor((currentTime.getTime() - startD.getTime()) / 1000))
+    } else {
+      // System is powered off / offline
+      effectiveStatus = 'offline'
+      isOngoing = false
+      // Cap duration at last known heartbeat time so it doesn't inflate while system is off
+      const capEnd = lastActiveTime && lastActiveTime.getTime() > startD.getTime() ? lastActiveTime : (endD || startD)
+      durationSeconds = Math.max(0, Math.floor((capEnd.getTime() - startD.getTime()) / 1000))
+    }
+
+    return {
+      startD,
+      endD,
+      isOnline,
+      isOngoing,
+      effectiveStatus,
+      durationSeconds,
+      lastActiveTime,
+      primaryDev,
+    }
+  }, [devices, currentTime])
+
   // Date-wise and duration sorting & filtering
   const filteredAndSortedSessions = useMemo(() => {
     let list = [...sessions]
@@ -95,15 +159,15 @@ export default function WorkSessions() {
         return sortOrder === 'desc' ? bStart - aStart : aStart - bStart
       }
       if (sortBy === 'duration') {
-        const aDur = calcDuration(a)
-        const bDur = calcDuration(b)
+        const aDur = getSessionDetails(a).durationSeconds
+        const bDur = getSessionDetails(b).durationSeconds
         return sortOrder === 'desc' ? bDur - aDur : aDur - bDur
       }
       return 0
     })
 
     return list
-  }, [sessions, filterEmployee, filterDate, sortBy, sortOrder])
+  }, [sessions, filterEmployee, filterDate, sortBy, sortOrder, getSessionDetails])
 
   const todayStr = useMemo(() => {
     const d = new Date()
@@ -295,9 +359,7 @@ export default function WorkSessions() {
               <tbody className="divide-y divide-white/5">
                 {filteredAndSortedSessions.map(sess => {
                   const emp = employees.find(e => e.id === sess.employeeId)
-                  const duration = calcDuration(sess)
-                  const startD = sess.startedAt instanceof Date ? sess.startedAt : new Date(sess.startedAt)
-                  const endD = sess.endedAt ? (sess.endedAt instanceof Date ? sess.endedAt : new Date(sess.endedAt)) : undefined
+                  const { startD, endD, isOngoing, effectiveStatus, durationSeconds, lastActiveTime } = getSessionDetails(sess)
 
                   return (
                     <tr key={sess.id} className="hover:bg-surface-700/30 transition-colors">
@@ -317,7 +379,7 @@ export default function WorkSessions() {
                         </div>
                       </td>
                       <td className="px-4 py-3.5">
-                        <StatusBadge status={sess.status} />
+                        <StatusBadge status={effectiveStatus} />
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-1.5">
@@ -335,17 +397,27 @@ export default function WorkSessions() {
                               {endD.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
                             </span>
                           </div>
-                        ) : (
+                        ) : isOngoing ? (
                           <span className="text-xs text-success-400 font-semibold flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-success-400 animate-pulse" />
                             Ongoing
                           </span>
+                        ) : (
+                          <div
+                            className="flex items-center gap-1.5"
+                            title={lastActiveTime ? `System shut down / offline since ${lastActiveTime.toLocaleString()}` : 'System offline'}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-white/30" />
+                            <span className="text-xs text-white/40">
+                              Offline {lastActiveTime ? `(${lastActiveTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})` : ''}
+                            </span>
+                          </div>
                         )}
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-1.5">
                           <Clock className="w-3 h-3 text-white/30" />
-                          <span className="text-sm font-mono text-white/70">{formatDuration(duration)}</span>
+                          <span className="text-sm font-mono text-white/70">{formatDuration(durationSeconds)}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3.5">
