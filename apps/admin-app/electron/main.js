@@ -27,22 +27,38 @@ function createWindow() {
       // Disable remote module
       enableRemoteModule: false,
     },
-    // Frameless-style titlebar
-    titleBarStyle: 'hiddenInset',
+    // Frameless-style titlebar for macOS only
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     show: false,
   })
 
   // Load Vite dev server or built files
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools()
+    mainWindow.loadURL('http://localhost:5173').catch(err => {
+      console.warn('[Admin Main] Could not connect to dev server, falling back to dist:', err)
+      mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+    })
+    mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
-  // Show window once ready to avoid flash
+  // Show window once ready to avoid flash, with fallback
   mainWindow.once('ready-to-show', () => {
-    mainWindow.show()
+    if (mainWindow) mainWindow.show()
+  })
+
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show()
+    }
+  }, 1000)
+
+  mainWindow.webContents.on('did-fail-load', (e, code, desc) => {
+    console.error('[Admin Main] did-fail-load:', code, desc)
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show()
+    }
   })
 
   mainWindow.on('closed', () => {

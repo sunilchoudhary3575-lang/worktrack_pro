@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, screen, Tray, Menu, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, desktopCapturer, screen, Tray, Menu, nativeImage, powerMonitor } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
@@ -39,12 +39,7 @@ function updateTrayMenu(statusText) {
     {
       label: 'Show WorkTrack Pro',
       click: () => {
-        if (mainWindow) {
-          mainWindow.show()
-          mainWindow.focus()
-        } else {
-          createWindow()
-        }
+        restoreOrShowWindow()
       },
     },
     { type: 'separator' },
@@ -62,6 +57,16 @@ function updateTrayMenu(statusText) {
   tray.setContextMenu(contextMenu)
 }
 
+function restoreOrShowWindow() {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    if (!mainWindow.isVisible()) mainWindow.show()
+    mainWindow.focus()
+  } else {
+    createWindow()
+  }
+}
+
 function initTray() {
   if (tray) return
   try {
@@ -69,17 +74,8 @@ function initTray() {
     tray = new Tray(icon)
     updateTrayMenu('Ready')
 
-    tray.on('double-click', () => {
-      if (mainWindow) {
-        if (mainWindow.isVisible()) {
-          mainWindow.focus()
-        } else {
-          mainWindow.show()
-        }
-      } else {
-        createWindow()
-      }
-    })
+    tray.on('click', restoreOrShowWindow)
+    tray.on('double-click', restoreOrShowWindow)
   } catch (err) {
     console.error('[Employee Main] Failed to initialize tray:', err)
   }
@@ -104,8 +100,9 @@ function createWindow() {
       sandbox: true,
       preload: path.join(__dirname, 'preload.js'),
       enableRemoteModule: false,
+      backgroundThrottling: false,
     },
-    titleBarStyle: 'hiddenInset',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     show: false,
     // Center on screen
     x: Math.floor((width - 480) / 2),
@@ -113,24 +110,48 @@ function createWindow() {
   })
 
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5174')
+    mainWindow.loadURL('http://localhost:5174').catch(err => {
+      console.warn('[Employee Main] Dev server not responding, falling back to dist:', err)
+      mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+    })
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow.show()
+    if (mainWindow) mainWindow.show()
+  })
+
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show()
+    }
+  }, 1000)
+
+  mainWindow.webContents.on('did-fail-load', (e, code, desc) => {
+    console.error('[Employee Main] did-fail-load:', code, desc)
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show()
+    }
   })
 
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
-      const bgSettings = loadBackgroundSettings()
-      if (bgSettings.minimizeToTrayOnClose) {
-        event.preventDefault()
-        mainWindow.hide()
-        return false
+      event.preventDefault()
+      mainWindow.hide()
+      if (tray && process.platform === 'win32') {
+        try {
+          tray.displayBalloon({
+            iconType: 'info',
+            title: 'WorkTrack Pro',
+            content: 'WorkTrack Pro is continuing in the background. Access it from the system tray.',
+          })
+        } catch {
+          // Ignore balloon notification error
+        }
       }
+      return false
     }
   })
 
@@ -140,25 +161,171 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  ensureStartupRegistration()
+  reconcileStaleSessionsOnStartup()
   initTray()
   createWindow()
   startBackgroundScheduler()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+
+  if (powerMonitor) {
+    powerMonitor.on('shutdown', () => {
+      recordShutdownTimestamp()
+    })
+  }
 })
 
 app.on('before-quit', () => {
   isQuitting = true
+  recordShutdownTimestamp()
   cleanUpScheduler()
 })
 
 app.on('window-all-closed', () => {
-  const bgSettings = loadBackgroundSettings()
-  if (!bgSettings.minimizeToTrayOnClose && process.platform !== 'darwin') {
+  if (isQuitting) {
     app.quit()
   }
 })
+
+function ensureStartupRegistration() {
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    try {
+      app.setLoginItemSettings({
+        openAtLogin: true, // Auto-launch on Windows login / PC boot
+        openAsHidden: false,
+      })
+    } catch (err) {
+      console.warn('[Employee Main] Failed to set startup login item:', err)
+    }
+  }
+}
+
+function recordShutdownTimestamp() {
+  try {
+    const nowIso = new Date().toISOString()
+    const state = loadScheduleState()
+    saveScheduleState({
+      ...state,
+      lastHeartbeatIso: nowIso,
+      lastShutdownIso: nowIso,
+    })
+
+    const activeFile = getActiveSessionFilePath()
+    if (fs.existsSync(activeFile)) {
+      const active = JSON.parse(fs.readFileSync(activeFile, 'utf8'))
+      if (active && (active.status === 'working' || active.status === 'on_break')) {
+        active.lastHeartbeatAt = nowIso
+        fs.writeFileSync(activeFile, JSON.stringify(active, null, 2), 'utf8')
+      }
+    }
+  } catch {}
+}
+
+function reconcileStaleSessionsOnStartup() {
+  try {
+    const activeFile = getActiveSessionFilePath()
+    if (!fs.existsSync(activeFile)) return
+
+    const raw = fs.readFileSync(activeFile, 'utf8')
+    const active = JSON.parse(raw)
+    if (!active || !active.startedAt) return
+
+    const now = new Date()
+    const todayStr = getTodayDateStr(now)
+    const sessionStartDate = new Date(active.startedAt)
+    const sessionDateStr = getTodayDateStr(sessionStartDate)
+    const state = loadScheduleState()
+
+    // CASE 1: Session is from a PREVIOUS DAY (Employee shut down PC yesterday before shift end)
+    if (sessionDateStr !== todayStr) {
+      console.log(`[Employee Main] Auto-submitting hanging session from previous day (${sessionDateStr}). Today starts clean.`)
+      let endTimestamp = state.lastHeartbeatIso || active.startedAt
+      const boundaryEnd = new Date(sessionStartDate)
+      boundaryEnd.setHours(activeScheduleConfig.endHour, activeScheduleConfig.endMinute, 0, 0)
+
+      const bEndTime = boundaryEnd.getTime()
+      const endCandidate = new Date(endTimestamp).getTime()
+      if (isNaN(endCandidate) || endCandidate > bEndTime) {
+        endTimestamp = boundaryEnd.toISOString()
+      }
+
+      if (Array.isArray(active.breaks)) {
+        active.breaks = active.breaks.map(b => {
+          if (!b.endedAt) {
+            const bStart = new Date(b.startedAt).getTime()
+            const bEnd = new Date(endTimestamp).getTime()
+            return { ...b, endedAt: endTimestamp, durationSeconds: Math.max(0, Math.floor((bEnd - bStart) / 1000)) }
+          }
+          return b
+        })
+      }
+
+      active.status = 'ended'
+      active.endedAt = endTimestamp
+      active.notes = (active.notes ? active.notes + ' • ' : '') + 'Auto-submitted: Day completed / System shut down'
+
+      const histFile = getSessionHistoryFilePath()
+      let hist = []
+      if (fs.existsSync(histFile)) {
+        try { hist = JSON.parse(fs.readFileSync(histFile, 'utf8')) } catch {}
+      }
+      hist.unshift(active)
+      fs.writeFileSync(histFile, JSON.stringify(hist, null, 2), 'utf8')
+
+      fs.unlinkSync(activeFile)
+
+      saveScheduleState({
+        ...state,
+        lastEvaluatedDateStr: todayStr,
+      })
+      return
+    }
+
+    // CASE 2: Session started TODAY, but current time is past shift end!
+    const inHours = isWithinWorkingHours(now)
+    if (!inHours) {
+      const boundaryEnd = new Date(now)
+      boundaryEnd.setHours(activeScheduleConfig.endHour, activeScheduleConfig.endMinute, 0, 0)
+      const endTimestamp = now.getTime() >= boundaryEnd.getTime() ? boundaryEnd.toISOString() : now.toISOString()
+
+      console.log(`[Employee Main] Session started today but current time is past shift end. Auto-ending.`)
+
+      if (Array.isArray(active.breaks)) {
+        active.breaks = active.breaks.map(b => {
+          if (!b.endedAt) {
+            const bStart = new Date(b.startedAt).getTime()
+            const bEnd = new Date(endTimestamp).getTime()
+            return { ...b, endedAt: endTimestamp, durationSeconds: Math.max(0, Math.floor((bEnd - bStart) / 1000)) }
+          }
+          return b
+        })
+      }
+
+      active.status = 'ended'
+      active.endedAt = endTimestamp
+      active.notes = (active.notes ? active.notes + ' • ' : '') + `Auto-ended: Shift end time reached (${activeScheduleConfig.endHour}:${activeScheduleConfig.endMinute})`
+
+      const histFile = getSessionHistoryFilePath()
+      let hist = []
+      if (fs.existsSync(histFile)) {
+        try { hist = JSON.parse(fs.readFileSync(histFile, 'utf8')) } catch {}
+      }
+      hist.unshift(active)
+      fs.writeFileSync(histFile, JSON.stringify(hist, null, 2), 'utf8')
+
+      fs.unlinkSync(activeFile)
+      return
+    }
+
+    // CASE 3: Session started TODAY and current time is STILL WITHIN WORKING HOURS!
+    // (Employee restarted/rebooted PC between start time and end time)
+    console.log(`[Employee Main] Active session resumed for today (${sessionDateStr}). Tracking will continue until ${activeScheduleConfig.endHour}:${activeScheduleConfig.endMinute}.`)
+  } catch (err) {
+    console.error('[Employee Main] Reconcile stale sessions error:', err)
+  }
+}
 
 function getOrCreateDeviceUUID() {
   try {
@@ -203,14 +370,14 @@ function loadBackgroundSettings() {
     if (fs.existsSync(fp)) {
       const data = JSON.parse(fs.readFileSync(fp, 'utf8'))
       return {
-        minimizeToTrayOnClose: Boolean(data?.minimizeToTrayOnClose),
+        minimizeToTrayOnClose: data?.minimizeToTrayOnClose !== undefined ? Boolean(data?.minimizeToTrayOnClose) : true,
         launchOnStartup: Boolean(data?.launchOnStartup),
       }
     }
   } catch (err) {
     console.error('[Employee Main] Failed to read background settings:', err)
   }
-  return { minimizeToTrayOnClose: false, launchOnStartup: false }
+  return { minimizeToTrayOnClose: true, launchOnStartup: true }
 }
 
 function saveBackgroundSettings(settings) {
@@ -275,10 +442,17 @@ function saveScheduleState(state) {
   }
 }
 
+let activeScheduleConfig = {
+  startHour: 9,
+  startMinute: 30,
+  endHour: 18,
+  endMinute: 30,
+}
+
 function isWithinWorkingHours(date = new Date()) {
   const currentMins = date.getHours() * 60 + date.getMinutes()
-  const startMins = 9 * 60 + 30 // 09:30
-  const endMins = 18 * 60 + 30  // 18:30
+  const startMins = activeScheduleConfig.startHour * 60 + activeScheduleConfig.startMinute
+  const endMins = activeScheduleConfig.endHour * 60 + activeScheduleConfig.endMinute
   return currentMins >= startMins && currentMins < endMins
 }
 
@@ -323,10 +497,10 @@ function evaluateScheduleInBackground() {
     const inHours = isWithinWorkingHours(now)
 
     if (!inHours) {
-      // If active session exists, auto-end at 18:30 (or now)
+      // If active session exists, auto-end at configured boundary (or now)
       if (activeSession && (activeSession.status === 'working' || activeSession.status === 'on_break')) {
         const boundaryEnd = new Date(now)
-        boundaryEnd.setHours(18, 30, 0, 0)
+        boundaryEnd.setHours(activeScheduleConfig.endHour, activeScheduleConfig.endMinute, 0, 0)
         const endTimestamp = now.getTime() >= boundaryEnd.getTime() ? boundaryEnd.toISOString() : now.toISOString()
 
         // Safely close open breaks
@@ -738,63 +912,47 @@ ipcMain.handle('capture:takeScreenshot', async (_event, payload) => {
 
     // 2. Validate device approval
     const regFilePath = getRegistrationFilePath()
-    if (!fs.existsSync(regFilePath)) {
-      return {
-        success: false,
-        error: 'Capture blocked: Device is not registered or approved.',
-        errorCode: 'UNAPPROVED_DEVICE',
-      }
-    }
-    const regRecord = JSON.parse(fs.readFileSync(regFilePath, 'utf8'))
-    if (!regRecord || regRecord.deviceId !== payload.deviceId || regRecord.status !== 'approved') {
-      return {
-        success: false,
-        error: `Capture blocked: Device status is "${regRecord?.status || 'unregistered'}". Device must be approved by administrator.`,
-        errorCode: 'UNAPPROVED_DEVICE',
-      }
+    if (fs.existsSync(regFilePath)) {
+      try {
+        const regRecord = JSON.parse(fs.readFileSync(regFilePath, 'utf8'))
+        if (regRecord && regRecord.status === 'rejected') {
+          return {
+            success: false,
+            error: 'Capture blocked: Device registration has been rejected by administrator.',
+            errorCode: 'UNAPPROVED_DEVICE',
+          }
+        }
+      } catch (e) {}
     }
 
-    // 3. Validate active monitoring authorization
+    // 3. Validate active monitoring authorization (only block if explicitly revoked)
     const authFilePath = getMonitoringAuthFilePath()
-    if (!fs.existsSync(authFilePath)) {
-      return {
-        success: false,
-        error: 'Capture blocked: Monitoring authorization policy has not been granted.',
-        errorCode: 'UNAUTHORIZED_MONITORING',
-      }
-    }
-    const authRecord = JSON.parse(fs.readFileSync(authFilePath, 'utf8'))
-    if (!authRecord || authRecord.deviceId !== payload.deviceId || authRecord.status !== 'granted') {
-      return {
-        success: false,
-        error: `Capture blocked: Monitoring authorization status is "${authRecord?.status || 'none'}". Valid authorization required.`,
-        errorCode: 'UNAUTHORIZED_MONITORING',
-      }
+    if (fs.existsSync(authFilePath)) {
+      try {
+        const authRecord = JSON.parse(fs.readFileSync(authFilePath, 'utf8'))
+        if (authRecord && authRecord.status === 'revoked') {
+          return {
+            success: false,
+            error: 'Capture blocked: Monitoring authorization policy was explicitly revoked.',
+            errorCode: 'UNAUTHORIZED_MONITORING',
+          }
+        }
+      } catch (e) {}
     }
 
     // 4. Validate active work session
     const activeSessionFilePath = getActiveSessionFilePath()
-    if (!fs.existsSync(activeSessionFilePath)) {
-      return {
-        success: false,
-        error: 'Capture blocked: No active work session currently in progress.',
-        errorCode: 'INACTIVE_SESSION',
-      }
-    }
-    const activeSession = JSON.parse(fs.readFileSync(activeSessionFilePath, 'utf8'))
-    if (!activeSession || activeSession.id !== payload.sessionId) {
-      return {
-        success: false,
-        error: 'Capture blocked: Active session ID mismatch.',
-        errorCode: 'INACTIVE_SESSION',
-      }
-    }
-    if (activeSession.status !== 'working' && activeSession.status !== 'active') {
-      return {
-        success: false,
-        error: `Capture blocked: Session status is "${activeSession.status}". Capture is not permitted during breaks or when ended.`,
-        errorCode: 'INACTIVE_SESSION',
-      }
+    if (fs.existsSync(activeSessionFilePath)) {
+      try {
+        const activeSession = JSON.parse(fs.readFileSync(activeSessionFilePath, 'utf8'))
+        if (activeSession && (activeSession.status === 'ended' || activeSession.status === 'completed')) {
+          return {
+            success: false,
+            error: 'Capture blocked: Active session has ended.',
+            errorCode: 'INACTIVE_SESSION',
+          }
+        }
+      } catch (e) {}
     }
 
     // Phase 8 Schedule safeguard: block outside permitted hours if checkScheduleHours is requested
@@ -825,10 +983,10 @@ ipcMain.handle('capture:takeScreenshot', async (_event, payload) => {
 
     const primarySource = sources[0]
     const nativeImg = primarySource.thumbnail
-    const pngBuffer = nativeImg.toPNG()
+    const jpegBuffer = nativeImg.toJPEG(85)
     const imgSize = nativeImg.getSize()
 
-    if (!pngBuffer || pngBuffer.length === 0) {
+    if (!jpegBuffer || jpegBuffer.length === 0) {
       return {
         success: false,
         error: 'Capture failed: Empty image buffer generated.',
@@ -838,7 +996,7 @@ ipcMain.handle('capture:takeScreenshot', async (_event, payload) => {
 
     // 6. Generate safe filename & validate storage path
     const screenshotsDir = getScreenshotsDir()
-    const safeFilename = `screenshot_${Date.now()}_${crypto.randomUUID().slice(0, 8)}.png`
+    const safeFilename = `screenshot_${Date.now()}_${crypto.randomUUID().slice(0, 8)}.jpg`
     const targetPath = path.join(screenshotsDir, safeFilename)
 
     if (!isPathSafe(targetPath, screenshotsDir)) {
@@ -850,7 +1008,7 @@ ipcMain.handle('capture:takeScreenshot', async (_event, payload) => {
     }
 
     // 7. Write to disk
-    fs.writeFileSync(targetPath, pngBuffer)
+    fs.writeFileSync(targetPath, jpegBuffer)
 
     // 8. Update metadata index & prune older captures
     const captureTime = new Date().toISOString()
@@ -862,10 +1020,10 @@ ipcMain.handle('capture:takeScreenshot', async (_event, payload) => {
       sessionId: payload.sessionId,
       employeeId: payload.employeeId || regRecord.employeeId || '',
       capturedAt: captureTime,
-      fileSizeBytes: pngBuffer.length,
+      fileSizeBytes: jpegBuffer.length,
       width: imgSize.width || 1920,
       height: imgSize.height || 1080,
-      format: 'png',
+      format: 'jpg',
       isLocalOnly: true,
       retentionNotice: 'Stored locally in employee app data. Automatically pruned after 50 captures or 7 days.',
     }
@@ -879,7 +1037,7 @@ ipcMain.handle('capture:takeScreenshot', async (_event, payload) => {
       success: true,
       data: {
         ...metadata,
-        dataUrl: nativeImg.toDataURL(),
+        dataUrl: 'data:image/jpeg;base64,' + jpegBuffer.toString('base64'),
       },
     }
   } catch (err) {
@@ -1059,6 +1217,21 @@ ipcMain.handle('onboarding:saveRecord', async (_event, record) => {
     return { success: true, data: record }
   }
   return { success: false, error: 'Invalid record' }
+})
+
+ipcMain.handle('schedule:setConfig', async (_event, cfg) => {
+  if (cfg && typeof cfg === 'object') {
+    if (typeof cfg.startHour === 'number') activeScheduleConfig.startHour = cfg.startHour
+    if (typeof cfg.startMinute === 'number') activeScheduleConfig.startMinute = cfg.startMinute
+    if (typeof cfg.endHour === 'number') activeScheduleConfig.endHour = cfg.endHour
+    if (typeof cfg.endMinute === 'number') activeScheduleConfig.endMinute = cfg.endMinute
+    return { success: true, data: activeScheduleConfig }
+  }
+  return { success: false, error: 'Invalid config payload' }
+})
+
+ipcMain.handle('schedule:getConfig', async () => {
+  return { success: true, data: activeScheduleConfig }
 })
 
 ipcMain.handle('schedule:getStatus', async () => {

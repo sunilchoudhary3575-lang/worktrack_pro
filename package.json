@@ -5,9 +5,11 @@
   "private": true,
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "functions"
   ],
   "scripts": {
+    "build": "npm run build:shared && npm run build:admin && npm run build:employee",
     "dev:admin": "npm run dev --workspace=apps/admin-app",
     "dev:employee": "npm run dev --workspace=apps/employee-app",
     "build:admin": "npm run build --workspace=apps/admin-app",
@@ -15,17 +17,29 @@
     "build:shared": "npm run build --workspace=packages/shared",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test:phase3 && npm run test:phase4 && npm run test:phase5 && npm run test:phase6 && npm run test:oneclick && npm run test:phase7 && npm run test:phase8",
+    "test": "npm run test:phase2 && npm run test:provisioning && npm run test:phase3 && npm run test:phase4 && npm run test:phase5 && npm run test:phase6 && npm run test:oneclick && npm run test:phase7 && npm run test:phase8 && npm run test:phase9 && npm run test:screenshots && npm run test:realtime",
+    "test:phase2": "npx tsx test-phase2-firestore.ts",
+    "test:provisioning": "npx tsx test-phase3-provisioning.ts",
     "test:phase3": "npx tsx test-phase3.ts",
     "test:phase4": "npx tsx test-phase4.ts",
     "test:phase5": "npx tsx test-phase5.ts",
     "test:phase6": "npx tsx test-phase6.ts",
     "test:oneclick": "npx tsx test-one-click-live-view.ts",
     "test:phase7": "npx tsx test-phase7.ts",
-    "test:phase8": "npx tsx test-phase8.ts"
+    "test:phase8": "npx tsx test-phase8.ts",
+    "test:phase9": "npx tsx test-phase9.ts",
+    "test:screenshots": "npx tsx test-screenshot-monitoring.ts",
+    "test:password-reset": "npx tsx test-phase3-password-reset.ts",
+    "test:realtime": "npx tsx test-realtime-status.ts"
   },
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=9.0.0"
+  },
+  "dependencies": {
+    "firebase": "^13.0.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0"
   }
 }

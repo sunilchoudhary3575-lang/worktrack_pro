@@ -15,6 +15,8 @@ import {
 import { deviceService } from './deviceService'
 import { sessionService } from './sessionService'
 import { permissionService } from './permissionService'
+import { getFirebaseInstance } from './firebaseAuth'
+import { doc, getDoc, onSnapshot } from 'firebase/firestore'
 
 export interface IClock {
   now(): Date
@@ -43,6 +45,8 @@ export const STORAGE_KEYS = {
   ONBOARDING: 'worktrack_onboarding_record',
   BACKGROUND_SETTINGS: 'worktrack_background_settings',
   SCHEDULE_STATE: 'worktrack_schedule_state',
+  ACTIVE_SCHEDULE_CONFIG: 'worktrack_active_schedule_config',
+  CUSTOM_SHIFT_END: 'worktrack_custom_shift_end',
 }
 
 export class ScheduleService {
@@ -50,10 +54,26 @@ export class ScheduleService {
   private config: ScheduleConfig
   private backgroundLoopTimer: any = null
   private isEvaluating = false
+  private cloudUnsub: (() => void) | null = null
+  private listeners: Set<(config: ScheduleConfig) => void> = new Set()
 
   constructor(clock: IClock = systemClock, config: ScheduleConfig = DEFAULT_SCHEDULE_CONFIG) {
     this.clock = clock
-    this.config = { ...config }
+    let initialConfig = { ...config }
+
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEYS.ACTIVE_SCHEDULE_CONFIG)
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          if (parsed && typeof parsed.endHour === 'number') {
+            initialConfig = { ...initialConfig, ...parsed }
+          }
+        }
+      } catch {}
+    }
+
+    this.config = initialConfig
   }
 
   /**
@@ -68,10 +88,143 @@ export class ScheduleService {
    */
   setConfig(config: Partial<ScheduleConfig>): void {
     this.config = { ...this.config, ...config }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_SCHEDULE_CONFIG, JSON.stringify(this.config))
+    }
+    this.notifyListeners()
+    this.syncToElectron()
   }
 
   getConfig(): ScheduleConfig {
     return { ...this.config }
+  }
+
+  /**
+   * Subscribe to schedule config updates
+   */
+  onScheduleChanged(cb: (config: ScheduleConfig) => void): () => void {
+    this.listeners.add(cb)
+    return () => {
+      this.listeners.delete(cb)
+    }
+  }
+
+  private notifyListeners(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(this.getConfig())
+      } catch {}
+    }
+  }
+
+  private async syncToElectron(): Promise<void> {
+    if (typeof window !== 'undefined' && (window as any).electronAPI?.invoke) {
+      try {
+        await (window as any).electronAPI.invoke('schedule:setConfig', this.config)
+      } catch {}
+    }
+  }
+
+  /**
+   * Parse schedule object from Firestore or settings (e.g. { startTime: "09:30", endTime: "18:30" })
+   */
+  applyScheduleFromData(data: { startTime?: string; endTime?: string; timezone?: string }): void {
+    let changed = false
+    if (data.startTime && typeof data.startTime === 'string') {
+      const [sh, sm] = data.startTime.split(':').map(Number)
+      if (!isNaN(sh) && !isNaN(sm)) {
+        if (this.config.startHour !== sh || this.config.startMinute !== sm) {
+          this.config.startHour = sh
+          this.config.startMinute = sm
+          changed = true
+        }
+      }
+    }
+
+    if (data.endTime && typeof data.endTime === 'string') {
+      const [eh, em] = data.endTime.split(':').map(Number)
+      if (!isNaN(eh) && !isNaN(em)) {
+        if (this.config.endHour !== eh || this.config.endMinute !== em) {
+          this.config.endHour = eh
+          this.config.endMinute = em
+          changed = true
+        }
+      }
+    }
+
+    if (data.timezone && this.config.timezone !== data.timezone) {
+      this.config.timezone = data.timezone
+      changed = true
+    }
+
+    if (changed) {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_KEYS.ACTIVE_SCHEDULE_CONFIG, JSON.stringify(this.config))
+      }
+      this.notifyListeners()
+      this.syncToElectron()
+    }
+  }
+
+  /**
+   * One-time fetch of schedule config from Firestore (/settings/global).
+   */
+  async fetchCloudSchedule(): Promise<ScheduleConfig> {
+    try {
+      const { db } = getFirebaseInstance()
+      if (db) {
+        const snap = await getDoc(doc(db, 'settings', 'global'))
+        if (snap.exists()) {
+          const data = snap.data()
+          if (data?.schedule) {
+            this.applyScheduleFromData(data.schedule)
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[ScheduleService] Could not fetch cloud schedule:', err)
+    }
+    return this.getConfig()
+  }
+
+  /**
+   * Realtime subscription to schedule changes from Firestore (/settings/global).
+   */
+  subscribeToCloudSchedule(): () => void {
+    if (this.cloudUnsub) {
+      this.cloudUnsub()
+      this.cloudUnsub = null
+    }
+
+    try {
+      const { db } = getFirebaseInstance()
+      if (!db) return () => {}
+
+      this.cloudUnsub = onSnapshot(
+        doc(db, 'settings', 'global'),
+        snap => {
+          if (snap.exists()) {
+            const data = snap.data()
+            if (data?.schedule) {
+              this.applyScheduleFromData(data.schedule)
+            }
+          }
+        },
+        err => {
+          console.warn('[ScheduleService] Realtime schedule subscription warning:', err)
+        }
+      )
+
+      return () => {
+        if (this.cloudUnsub) {
+          this.cloudUnsub()
+          this.cloudUnsub = null
+        }
+      }
+    } catch (err) {
+      console.warn('[ScheduleService] Failed to establish schedule subscription:', err)
+      return () => {}
+    }
   }
 
   // ─── Date & Time Helpers ────────────────────────────────────
@@ -94,7 +247,32 @@ export class ScheduleService {
   }
 
   /**
-   * Determine whether given date is within configured working hours (default 09:30 - 18:30)
+   * Format configured Start Time as human-readable string (e.g. "09:30 AM")
+   */
+  getFormattedStartTime(): string {
+    const d = new Date()
+    d.setHours(this.config.startHour, this.config.startMinute, 0, 0)
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+
+  /**
+   * Format configured End Time as human-readable string (e.g. "06:30 PM")
+   */
+  getFormattedEndTime(): string {
+    const d = new Date()
+    d.setHours(this.config.endHour, this.config.endMinute, 0, 0)
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+
+  /**
+   * Format entire configured Shift Range (e.g. "09:30 AM – 06:30 PM")
+   */
+  getFormattedShiftTime(): string {
+    return `${this.getFormattedStartTime()} – ${this.getFormattedEndTime()}`
+  }
+
+  /**
+   * Determine whether given date is within configured working hours
    */
   isWithinWorkingHours(date?: Date): boolean {
     const d = date || this.clock.now()
@@ -106,10 +284,19 @@ export class ScheduleService {
   }
 
   /**
+   * Determine whether the given time has reached or passed today's scheduled end boundary
+   */
+  isPastScheduledEnd(date?: Date): boolean {
+    const now = date || this.clock.now()
+    const boundary = this.getScheduledEndBoundary(now)
+    return now.getTime() >= boundary.getTime()
+  }
+
+  /**
    * Calculate scheduled start date for the given date
    */
-  getScheduledStartBoundary(date: Date): Date {
-    const d = new Date(date)
+  getScheduledStartBoundary(date?: Date): Date {
+    const d = new Date(date || this.clock.now())
     d.setHours(this.config.startHour, this.config.startMinute, 0, 0)
     return d
   }
@@ -117,8 +304,8 @@ export class ScheduleService {
   /**
    * Calculate scheduled end date for the given date
    */
-  getScheduledEndBoundary(date: Date): Date {
-    const d = new Date(date)
+  getScheduledEndBoundary(date?: Date): Date {
+    const d = new Date(date || this.clock.now())
     d.setHours(this.config.endHour, this.config.endMinute, 0, 0)
     return d
   }
@@ -341,7 +528,7 @@ export class ScheduleService {
           // Close active break safely if open
           const ended = await sessionService.endWork({
             timestamp: endTimestamp,
-            notes: 'Scheduled end of day (18:30)',
+            notes: `Scheduled end of day (${this.getFormattedEndTime()})`,
           })
 
           await this.saveScheduleState({
@@ -351,7 +538,7 @@ export class ScheduleService {
 
           return {
             action: 'ended',
-            reason: `Automatic end of work session at scheduled boundary (${this.config.endHour}:${this.config.endMinute}).`,
+            reason: `Automatic end of work session at scheduled boundary (${this.getFormattedEndTime()}).`,
             session: ended,
             timestamp: endTimestamp,
           }

@@ -10,8 +10,13 @@ import {
   Shield,
   ShieldAlert,
   ChevronRight,
+  LogOut,
+  Sun,
+  Moon,
 } from 'lucide-react'
 import WindowControls from './WindowControls'
+import { UserAccount } from '@worktrack-pro/shared'
+import { useTheme } from '../context/ThemeContext'
 
 const NAV_ITEMS = [
   { to: '/dashboard',   icon: LayoutDashboard, label: 'Dashboard' },
@@ -24,8 +29,15 @@ const NAV_ITEMS = [
   { to: '/settings',    icon: Settings,        label: 'Settings' },
 ]
 
-export default function Layout() {
+export interface LayoutProps {
+  user?: UserAccount | null
+  isDemo?: boolean
+  onSignOut?: () => void
+}
+
+export default function Layout({ user, isDemo = false, onSignOut }: LayoutProps) {
   const location = useLocation()
+  const { theme, toggleTheme } = useTheme()
 
   const currentPage = NAV_ITEMS.find(n =>
     location.pathname.startsWith(n.to)
@@ -69,11 +81,15 @@ export default function Layout() {
 
         {/* Footer */}
         <div className="p-3 border-t border-white/5">
-          <div className="glass-card p-3">
-            <p className="text-[10px] text-white/30 font-mono leading-relaxed">
-              ⚠ Phase 1 — Mock Data
-              <br />
-              Firebase not configured
+          <div className="glass-card p-3 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className={`w-1.5 h-1.5 rounded-full ${isDemo ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'}`} />
+              <p className="text-[11px] font-semibold text-white">
+                {isDemo ? 'Offline Demo Mode' : 'Firestore Live'}
+              </p>
+            </div>
+            <p className="text-[9px] text-white/40 font-mono leading-relaxed truncate">
+              {isDemo ? 'Local mock datasets' : 'Cloud Sync · worktrack-pro-8aa42'}
             </p>
           </div>
         </div>
@@ -86,15 +102,66 @@ export default function Layout() {
           <div className="titlebar-no-drag flex items-center gap-4 w-full">
             <h1 className="text-sm font-semibold text-white">{currentPage}</h1>
             <div className="ml-auto flex items-center gap-3">
-              {/* Mock data indicator */}
-              <span className="mock-banner">
-                <span className="w-1.5 h-1.5 rounded-full bg-warning-400 animate-pulse" />
-                Mock Data Active
+              {/* Light / Dark Mode Toggle Button */}
+              <button
+                id="btn-theme-toggle"
+                type="button"
+                onClick={toggleTheme}
+                title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+                aria-label={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium text-white/70 hover:text-white bg-surface-800/80 hover:bg-surface-700 border border-white/10 transition-all cursor-pointer shadow-sm active:scale-95"
+              >
+                {theme === 'dark' ? (
+                  <>
+                    <Sun className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="hidden sm:inline text-[11px]">Light</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon className="w-3.5 h-3.5 text-indigo-500" />
+                    <span className="hidden sm:inline text-[11px]">Dark</span>
+                  </>
+                )}
+              </button>
+
+              {/* Mode indicator */}
+              <span className={`text-[10px] px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5 ${
+                isDemo
+                  ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                  : 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${isDemo ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'}`} />
+                {isDemo ? 'Demo Mode' : 'Firebase Cloud'}
               </span>
-              {/* Admin avatar */}
-              <div className="w-8 h-8 rounded-full bg-brand-600 flex items-center justify-center text-xs font-bold text-white">
-                A
+
+              {/* Admin identity badge */}
+              <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-surface-800/60 border border-white/5">
+                <div className="w-6 h-6 rounded-md bg-brand-600 flex items-center justify-center text-[10px] font-bold text-white shadow-sm">
+                  {user?.displayName ? user.displayName.charAt(0).toUpperCase() : 'A'}
+                </div>
+                <div className="text-left hidden sm:block">
+                  <div className="text-[11px] font-medium text-white truncate max-w-[120px]">
+                    {user?.displayName || 'Administrator'}
+                  </div>
+                  <div className="text-[9px] text-brand-400 uppercase font-mono font-semibold">
+                    {user?.role || 'ADMIN'}
+                  </div>
+                </div>
               </div>
+
+              {/* Sign out button */}
+              {onSignOut && (
+                <button
+                  id="btn-admin-sign-out"
+                  type="button"
+                  onClick={onSignOut}
+                  title="Sign out of Admin session"
+                  className="p-1.5 rounded-lg text-white/50 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all text-xs flex items-center gap-1"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              )}
+
               <div className="h-4 w-px bg-white/10 mx-1" />
               <WindowControls />
             </div>

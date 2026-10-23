@@ -16,6 +16,8 @@ import {
   parseDate,
 } from '@worktrack-pro/shared'
 import { deviceService } from './deviceService'
+import { getFirebaseInstance, employeeAuthService } from './firebaseAuth'
+import { doc, setDoc } from 'firebase/firestore'
 
 const LOCAL_STORAGE_ACTIVE_SESSION = 'worktrack_active_session'
 const LOCAL_STORAGE_SESSION_HISTORY = 'worktrack_session_history'
@@ -115,6 +117,133 @@ export class SessionService {
   }
 
   /**
+   * Reconciles an active session on retrieval:
+   * 1. If started on a previous calendar day (e.g. PC shut down before shift end yesterday),
+   *    it is automatically finalized, archived into history, synced to Firestore, and cleared.
+   *    Returns null so today (kal) starts clean with a new session.
+   * 2. If started today but now is past today's shift end time, it is auto-finalized at shift end.
+   * 3. If started today and within working hours (e.g. employee restarted/rebooted PC),
+   *    it returns the session so tracking automatically resumes until shift end!
+   */
+  private async reconcileActiveSession(session: WorkSession): Promise<WorkSession | null> {
+    const now = new Date()
+    const sessionStart = session.startedAt instanceof Date ? session.startedAt : new Date(session.startedAt)
+
+    const sessionDateStr = `${sessionStart.getFullYear()}-${String(sessionStart.getMonth() + 1).padStart(2, '0')}-${String(sessionStart.getDate()).padStart(2, '0')}`
+    const todayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+
+    // ── CASE 1: Previous Day Session (PC shut down before shift end yesterday) ──
+    if (sessionDateStr !== todayDateStr) {
+      console.log(`[SessionService] Found session from previous day (${sessionDateStr}). Auto-submitting to start clean today.`)
+
+      // End timestamp: Previous day's scheduled end boundary (or start + safe duration)
+      let endTimestamp = new Date(sessionStart)
+      endTimestamp.setHours(18, 30, 0, 0)
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const rawCfg = localStorage.getItem('worktrack_active_schedule_config')
+          if (rawCfg) {
+            const parsed = JSON.parse(rawCfg)
+            if (parsed && typeof parsed.endHour === 'number') {
+              endTimestamp.setHours(parsed.endHour, parsed.endMinute || 0, 0, 0)
+            }
+          }
+        } catch {}
+      }
+
+      if (endTimestamp.getTime() <= sessionStart.getTime()) {
+        endTimestamp = new Date(sessionStart.getTime() + 60 * 1000)
+      }
+
+      // Close open breaks
+      const updatedBreaks = (session.breaks || []).map(b => {
+        if (!b.endedAt) {
+          const bStart = b.startedAt instanceof Date ? b.startedAt : new Date(b.startedAt)
+          const dur = Math.max(0, Math.floor((endTimestamp.getTime() - bStart.getTime()) / 1000))
+          return { ...b, endedAt: endTimestamp, durationSeconds: dur }
+        }
+        return b
+      })
+
+      const finalElapsed = Math.max(0, Math.floor((endTimestamp.getTime() - sessionStart.getTime()) / 1000))
+      const finalBreak = updatedBreaks.reduce((acc, b) => acc + (b.durationSeconds ?? 0), 0)
+      const finalWork = Math.max(0, finalElapsed - finalBreak)
+
+      const autoEndedSession: WorkSession = {
+        ...session,
+        status: 'ended',
+        endedAt: endTimestamp,
+        breaks: updatedBreaks,
+        durationSeconds: finalElapsed,
+        workDurationSeconds: finalWork,
+        breakDurationSeconds: finalBreak,
+        notes: (session.notes ? session.notes + ' • ' : '') + 'Auto-submitted: Day completed / System shut down',
+      }
+
+      await this.clearActiveSession()
+      await this.archiveSession(autoEndedSession)
+      this.cachedActiveSession = null
+      this.syncSessionToFirestore(autoEndedSession).catch(() => {})
+      return null
+    }
+
+    // ── CASE 2: Same Day Session, but current time has already passed today's shift end ──
+    const boundaryEnd = new Date(now)
+    boundaryEnd.setHours(18, 30, 0, 0)
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const rawCfg = localStorage.getItem('worktrack_active_schedule_config')
+        if (rawCfg) {
+          const parsed = JSON.parse(rawCfg)
+          if (parsed && typeof parsed.endHour === 'number') {
+            boundaryEnd.setHours(parsed.endHour, parsed.endMinute || 0, 0, 0)
+          }
+        }
+      } catch {}
+    }
+
+    if (now.getTime() >= boundaryEnd.getTime()) {
+      console.log(`[SessionService] Session started today (${sessionDateStr}) but now past shift end. Auto-ending.`)
+
+      const updatedBreaks = (session.breaks || []).map(b => {
+        if (!b.endedAt) {
+          const bStart = b.startedAt instanceof Date ? b.startedAt : new Date(b.startedAt)
+          const dur = Math.max(0, Math.floor((boundaryEnd.getTime() - bStart.getTime()) / 1000))
+          return { ...b, endedAt: boundaryEnd, durationSeconds: dur }
+        }
+        return b
+      })
+
+      const finalElapsed = Math.max(0, Math.floor((boundaryEnd.getTime() - sessionStart.getTime()) / 1000))
+      const finalBreak = updatedBreaks.reduce((acc, b) => acc + (b.durationSeconds ?? 0), 0)
+      const finalWork = Math.max(0, finalElapsed - finalBreak)
+
+      const autoEndedSession: WorkSession = {
+        ...session,
+        status: 'ended',
+        endedAt: boundaryEnd,
+        breaks: updatedBreaks,
+        durationSeconds: finalElapsed,
+        workDurationSeconds: finalWork,
+        breakDurationSeconds: finalBreak,
+        notes: (session.notes ? session.notes + ' • ' : '') + `Auto-ended: Shift end time reached (${boundaryEnd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`,
+      }
+
+      await this.clearActiveSession()
+      await this.archiveSession(autoEndedSession)
+      this.cachedActiveSession = null
+      this.syncSessionToFirestore(autoEndedSession).catch(() => {})
+      return null
+    }
+
+    // ── CASE 3: Same Day Session & Within Working Hours! ──
+    // Employee restarted / rebooted PC between start time and end time.
+    // The session is valid and resumes automatically!
+    this.cachedActiveSession = session
+    return session
+  }
+
+  /**
    * Retrieve active session (working or on_break) from persistence.
    * Returns null if no active session is in progress.
    */
@@ -126,8 +255,9 @@ export class SessionService {
         const res = await api.invoke('session:getActive')
         if (res && res.success && res.data) {
           const session = this.deserializeSession(res.data)
-          this.cachedActiveSession = session
-          return session
+          if (session) {
+            return await this.reconcileActiveSession(session)
+          }
         }
       } catch (err) {
         console.warn('[SessionService] Electron getActive error, falling back to localStorage:', err)
@@ -140,8 +270,9 @@ export class SessionService {
       try {
         const parsed = JSON.parse(raw)
         const session = this.deserializeSession(parsed)
-        this.cachedActiveSession = session
-        return session
+        if (session) {
+          return await this.reconcileActiveSession(session)
+        }
       } catch {
         localStorage.removeItem(LOCAL_STORAGE_ACTIVE_SESSION)
       }
@@ -215,6 +346,7 @@ export class SessionService {
 
       await this.saveActiveSession(newSession)
       this.cachedActiveSession = newSession
+      this.syncSessionToFirestore(newSession).catch(() => {})
       return newSession
     } finally {
       this.isProcessing = false
@@ -283,6 +415,7 @@ export class SessionService {
 
       await this.saveActiveSession(updatedSession)
       this.cachedActiveSession = updatedSession
+      this.syncSessionToFirestore(updatedSession).catch(() => {})
       return updatedSession
     } finally {
       this.isProcessing = false
@@ -341,6 +474,7 @@ export class SessionService {
 
       await this.saveActiveSession(updatedSession)
       this.cachedActiveSession = updatedSession
+      this.syncSessionToFirestore(updatedSession).catch(() => {})
       return updatedSession
     } finally {
       this.isProcessing = false
@@ -408,6 +542,7 @@ export class SessionService {
       await this.archiveSession(endedSession)
 
       this.cachedActiveSession = null
+      this.syncSessionToFirestore(endedSession).catch(() => {})
       return endedSession
     } finally {
       this.isProcessing = false
@@ -480,6 +615,68 @@ export class SessionService {
    */
   calculateDurations(session: WorkSession, now: Date = new Date()) {
     return calculateSessionDurations(session, now)
+  }
+
+  /**
+   * Synchronizes a work session to Cloud Firestore /work_sessions/{id}.
+   * Gracefully handles offline mode by succeeding locally.
+   */
+  async syncSessionToFirestore(session: WorkSession, overrideAuthUid?: string): Promise<boolean> {
+    const { db } = getFirebaseInstance()
+    const authUid = overrideAuthUid || employeeAuthService.getAuthUid()
+    const isOnline = typeof navigator === 'undefined' || navigator.onLine !== false
+
+    if (!db || !authUid || !isOnline) {
+      return false
+    }
+
+    try {
+      const firestoreStatus =
+        session.status === 'ended' ? 'completed' :
+        session.status === 'on_break' ? 'paused' :
+        'working'
+
+      const sessionDocRef = doc(db, 'work_sessions', session.id)
+      const nowIso = new Date().toISOString()
+
+      const payload: any = {
+        id: session.id,
+        sessionId: session.id,
+        userId: authUid,
+        employeeId: session.employeeId,
+        deviceId: session.deviceId,
+        status: firestoreStatus,
+        startedAt: session.startedAt instanceof Date ? session.startedAt.toISOString() : new Date(session.startedAt).toISOString(),
+        durationSeconds: session.durationSeconds || 0,
+        workDurationSeconds: session.workDurationSeconds || 0,
+        breakDurationSeconds: session.breakDurationSeconds || 0,
+        breaks: (session.breaks || []).map(b => ({
+          id: b.id,
+          reason: b.reason,
+          customReason: b.customReason || null,
+          startedAt: b.startedAt instanceof Date ? b.startedAt.toISOString() : new Date(b.startedAt).toISOString(),
+          endedAt: b.endedAt ? (b.endedAt instanceof Date ? b.endedAt.toISOString() : new Date(b.endedAt).toISOString()) : null,
+          durationSeconds: b.durationSeconds || 0,
+        })),
+        notes: session.notes || null,
+      }
+
+      if (session.endedAt) {
+        payload.endedAt = session.endedAt instanceof Date ? session.endedAt.toISOString() : new Date(session.endedAt).toISOString()
+      } else if (firestoreStatus === 'completed') {
+        payload.endedAt = nowIso
+      }
+
+      if (session.pausedAt) {
+        payload.pausedAt = session.pausedAt instanceof Date ? session.pausedAt.toISOString() : new Date(session.pausedAt).toISOString()
+      }
+
+      await setDoc(sessionDocRef, payload, { merge: true })
+      return true
+    } catch (err) {
+      console.error('[SessionService] Could not sync session to Firestore:', err)
+      return false
+    }
   }
 
   // ─── Internal Persistence Helpers ──────────────────────────

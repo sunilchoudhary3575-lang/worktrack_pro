@@ -14,17 +14,20 @@ import {
   Sparkles,
   ArrowRight,
   RotateCcw,
+  LogOut,
 } from 'lucide-react'
 import type { DeviceIdentity } from '../App'
-import type { DeviceRegistrationRecord, DeviceRegistrationStatus } from '@worktrack-pro/shared'
+import type { DeviceRegistrationRecord, DeviceRegistrationStatus, UserAccount } from '@worktrack-pro/shared'
 import WindowControls from '../components/WindowControls'
 import { deviceService, type DeviceInfo } from '../services/deviceService'
 
 interface Props {
   onRegistered: (identity: DeviceIdentity) => void
+  onLogout?: () => void
+  authUser?: UserAccount | null
 }
 
-export default function RegistrationScreen({ onRegistered }: Props) {
+export default function RegistrationScreen({ onRegistered, onLogout, authUser }: Props) {
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null)
   const [record, setRecord] = useState<DeviceRegistrationRecord | null>(null)
   const [loading, setLoading] = useState(true)
@@ -40,12 +43,20 @@ export default function RegistrationScreen({ onRegistered }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
-  // Load device info & current registration on mount
+  // Load device info & current registration on mount, listen for admin approval
   useEffect(() => {
-    loadData()
+    let unsub = () => {}
+    loadData().then(info => {
+      if (info?.deviceId) {
+        unsub = deviceService.subscribeToDeviceApproval(info.deviceId, (updatedRecord) => {
+          setRecord(updatedRecord)
+        })
+      }
+    })
+    return () => unsub()
   }, [])
 
-  const loadData = async () => {
+  const loadData = async (): Promise<DeviceInfo | null> => {
     setLoading(true)
     setError(null)
     try {
@@ -56,11 +67,23 @@ export default function RegistrationScreen({ onRegistered }: Props) {
       setDeviceInfo(info)
       setRecord(currentRecord)
       setDeviceName(currentRecord.deviceName || info.deviceName)
-      if (currentRecord.employeeId) setEmployeeId(currentRecord.employeeId)
-      if (currentRecord.employeeName) setEmployeeName(currentRecord.employeeName)
+      if (currentRecord.employeeId) {
+        setEmployeeId(currentRecord.employeeId)
+      } else if (authUser?.employeeId) {
+        setEmployeeId(authUser.employeeId)
+      }
+
+      if (currentRecord.employeeName) {
+        setEmployeeName(currentRecord.employeeName)
+      } else if (authUser?.displayName) {
+        setEmployeeName(authUser.displayName)
+      }
+
       if (currentRecord.department) setDepartment(currentRecord.department)
+      return info
     } catch (err: any) {
       setError(err?.message || 'Failed to initialize device identity.')
+      return null
     } finally {
       setLoading(false)
     }
@@ -168,7 +191,17 @@ export default function RegistrationScreen({ onRegistered }: Props) {
           <span className="text-xs font-bold text-white tracking-wide">WorkTrack Pro</span>
           <span className="text-[10px] text-white/40 font-mono">Agent Setup</span>
         </div>
-        <div className="titlebar-no-drag">
+        <div className="flex items-center gap-2 titlebar-no-drag">
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="px-2 py-0.5 rounded text-[10px] font-medium text-white/50 hover:text-white hover:bg-white/10 flex items-center gap-1 transition-colors"
+              title="Sign in with a different account"
+            >
+              <LogOut className="w-3 h-3" />
+              <span>Switch User</span>
+            </button>
+          )}
           <WindowControls />
         </div>
       </div>
@@ -185,6 +218,25 @@ export default function RegistrationScreen({ onRegistered }: Props) {
               <h1 className="text-lg font-bold text-white">WorkTrack Pro</h1>
               <p className="text-xs text-white/40">Employee Agent • Phase 3 Device Registration</p>
             </div>
+            {authUser && (
+              <div className="pt-0.5">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] text-white/70">
+                  <span className="w-1.5 h-1.5 rounded-full bg-brand-400 animate-pulse" />
+                  <span>
+                    Signed In: <strong className="text-white font-mono">{authUser.employeeId || authUser.displayName}</strong>
+                  </span>
+                  {onLogout && (
+                    <button
+                      type="button"
+                      onClick={onLogout}
+                      className="text-brand-400 hover:text-brand-300 underline font-medium ml-1"
+                    >
+                      (Log Out)
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Device Identity Hardware Chip */}
@@ -306,6 +358,18 @@ export default function RegistrationScreen({ onRegistered }: Props) {
                   </>
                 )}
               </button>
+
+              {onLogout && (
+                <div className="text-center pt-2">
+                  <button
+                    type="button"
+                    onClick={onLogout}
+                    className="text-[11px] text-white/40 hover:text-white/80 transition-colors"
+                  >
+                    Want to sign in with password? <span className="text-brand-400 underline">Switch Account</span>
+                  </button>
+                </div>
+              )}
             </form>
           )}
 

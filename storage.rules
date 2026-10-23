@@ -1,0 +1,65 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ─── Security Helper Functions ───
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserDoc() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Verified Admin role: strictly requires active Firestore admin profile.
+    // Stale custom token claims cannot bypass demotion or deactivation.
+    function isAdmin() {
+      return isAuthenticated() &&
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        getUserDoc().role == 'admin' &&
+        getUserDoc().status == 'active';
+    }
+
+    // Active Employee check: requires active Firestore profile and matching UID
+    function isActiveEmployee(employeeUid) {
+      return isAuthenticated() &&
+        request.auth.uid == employeeUid &&
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        getUserDoc().status == 'active';
+    }
+
+    // Default Security Posture: Deny all by default
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // ─── 1. Screenshots Storage Boundary ───
+    // Structured Path: screenshots/{employeeUid}/{sessionId}/{fileName}
+    match /screenshots/{employeeUid}/{sessionId}/{fileName} {
+      // Create:
+      // - Enforce immutability: Object must not already exist (resource == null). Overwriting existing captures is blocked.
+      // - Active authenticated employees can upload screenshots ONLY to their own employeeUid namespace.
+      // - Payload MUST be a valid JPEG image format (image/jpeg).
+      // - Maximum file size enforced at 5 MB to prevent quota exhaustion or abuse.
+      // - Active Administrators can also upload.
+      allow create: if resource == null &&
+        (isActiveEmployee(employeeUid) || isAdmin()) &&
+        request.resource.contentType == 'image/jpeg' &&
+        request.resource.size < 5 * 1024 * 1024;
+
+      // Read:
+      // - Active Administrators can inspect all employee screenshots.
+      // - Active Employees can read ONLY their own screenshots matching their auth UID.
+      // - Cross-employee screenshot browsing is strictly forbidden.
+      allow read: if (request.auth.uid == employeeUid || isAdmin()) &&
+        (isActiveEmployee(employeeUid) || isAdmin());
+
+      // Update: Immutable captures. Existing screenshot image files cannot be modified or overwritten.
+      allow update: if false;
+
+      // Delete: Strictly restricted to authorized active Administrators.
+      // Standard employees CANNOT destroy or delete audit screenshots.
+      allow delete: if isAdmin();
+    }
+  }
+}

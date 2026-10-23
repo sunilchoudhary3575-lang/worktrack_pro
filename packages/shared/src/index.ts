@@ -27,6 +27,105 @@ export interface Employee {
   avatarUrl?: string;
   createdAt: Date;
   updatedAt: Date;
+  userId?: string;
+  status?: 'active' | 'inactive' | 'suspended';
+}
+
+// ─── Distinct System & UI Status States ───────────────────────
+
+export type AccountStatus = 'activated' | 'not_activated' | 'disabled';
+export type DeviceApprovalState = 'pending' | 'approved' | 'rejected' | 'unregistered';
+export type PresenceStatus = 'online' | 'offline' | 'unknown';
+export type SessionState = 'working' | 'on_break' | 'ended' | 'no_session';
+
+export const PRESENCE_EXPIRY_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
+export const HEARTBEAT_INTERVAL_MS = 60 * 1000; // 60 seconds
+
+export function deriveAccountStatus(
+  employee?: { userId?: string; status?: string } | null,
+  userAccount?: { status?: string; uid?: string } | null
+): AccountStatus {
+  if (userAccount?.status === 'disabled' || employee?.status === 'suspended' || employee?.status === 'inactive') {
+    return 'disabled';
+  }
+  if (employee?.userId || userAccount?.uid) {
+    return 'activated';
+  }
+  return 'not_activated';
+}
+
+export function deriveDeviceApprovalState(
+  device?: { approvalStatus?: string; status?: string } | null,
+  registration?: { status?: string } | null
+): DeviceApprovalState {
+  const st = (device?.approvalStatus || registration?.status || '').toLowerCase();
+  if (st === 'approved') return 'approved';
+  if (st === 'pending' || st === 'pending_approval') return 'pending';
+  if (st === 'rejected') return 'rejected';
+  return 'unregistered';
+}
+
+export function derivePresenceStatus(
+  lastHeartbeat: Date | string | number | undefined | null,
+  now: Date = new Date(),
+  thresholdMs = PRESENCE_EXPIRY_THRESHOLD_MS
+): PresenceStatus {
+  if (!lastHeartbeat) return 'unknown';
+  const hbDate = parseDate(lastHeartbeat as any);
+  if (!hbDate) return 'unknown';
+  const diff = now.getTime() - hbDate.getTime();
+  // Allow slight clock skew forward up to thresholdMs
+  if (diff >= -thresholdMs && diff <= thresholdMs) {
+    return 'online';
+  }
+  return 'offline';
+}
+
+export function deriveEmployeePresence(
+  devices: Array<{ lastHeartbeat?: any; lastSeen?: any; status?: string }> | undefined | null,
+  userLastActive?: any,
+  now: Date = new Date(),
+  thresholdMs = PRESENCE_EXPIRY_THRESHOLD_MS
+): PresenceStatus {
+  const devs = devices || [];
+  let hasKnownHeartbeat = false;
+  let anyOnline = false;
+
+  for (const dev of devs) {
+    const hb = dev.lastHeartbeat || dev.lastSeen;
+    if (hb) {
+      hasKnownHeartbeat = true;
+      const status = derivePresenceStatus(hb, now, thresholdMs);
+      if (status === 'online') {
+        anyOnline = true;
+      }
+    }
+  }
+
+  if (anyOnline) {
+    return 'online';
+  }
+
+  if (hasKnownHeartbeat) {
+    return 'offline';
+  }
+
+  if (userLastActive) {
+    return derivePresenceStatus(userLastActive, now, thresholdMs);
+  }
+
+  return 'unknown';
+}
+
+export function deriveSessionState(
+  session?: { status?: string; endedAt?: any } | null
+): SessionState {
+  if (!session) return 'no_session';
+  const st = (session.status || '').toLowerCase();
+  if (st === 'working' || st === 'active') return 'working';
+  if (st === 'on_break' || st === 'paused') return 'on_break';
+  if (st === 'ended' || st === 'completed') return 'ended';
+  return 'no_session';
 }
 
 // ─── Device ─────────────────────────────────────────────────
@@ -63,9 +162,14 @@ export interface Device {
   osVersion: string;
   appVersion: string;
   status: DeviceStatus;
+  approvalStatus?: DeviceRegistrationStatus;
   ipAddress?: string;
   lastSeen: Date;
+  lastHeartbeat?: Date;
   registeredAt: Date;
+  reviewedAt?: Date | string;
+  reviewedBy?: string;
+  rejectionReason?: string;
 }
 
 // ─── Employee Break ─────────────────────────────────────────
@@ -127,9 +231,20 @@ export interface SerializedWorkSession {
 
 // ─── Time Calculation Helpers (Timestamp source of truth) ──
 
-export function parseDate(val: Date | string | undefined | null): Date | undefined {
+export function parseDate(val: any): Date | undefined {
   if (!val) return undefined;
   if (val instanceof Date) return isNaN(val.getTime()) ? undefined : val;
+  if (typeof val?.toDate === 'function') {
+    try {
+      const d = val.toDate();
+      if (d instanceof Date && !isNaN(d.getTime())) return d;
+    } catch {}
+  }
+  if (typeof val === 'object' && typeof val?.seconds === 'number') {
+    const ms = val.seconds * 1000 + (val.nanoseconds ? Math.floor(val.nanoseconds / 1e6) : 0);
+    const d = new Date(ms);
+    if (!isNaN(d.getTime())) return d;
+  }
   const d = new Date(val);
   return isNaN(d.getTime()) ? undefined : d;
 }
@@ -189,17 +304,76 @@ export function calculateSessionDurations(
 
 // ─── Screenshot ──────────────────────────────────────────────
 
+export type ScreenshotUploadStatus = 'uploaded' | 'pending' | 'failed';
+export type ScreenshotImageFormat = 'png' | 'jpg' | 'jpeg';
+
 export interface Screenshot {
   id: string;
   sessionId: string;
   employeeId: string;
+  employeeName?: string;
+  userId?: string;
   deviceId: string;
   takenAt: Date;
+  createdAt?: Date;
   imageUrl: string;
+  storagePath?: string;
   thumbnailUrl?: string;
   fileSizeBytes?: number;
   width?: number;
   height?: number;
+  format?: ScreenshotImageFormat;
+  status?: ScreenshotUploadStatus;
+  retryCount?: number;
+}
+
+export interface SerializedScreenshot {
+  id: string;
+  sessionId: string;
+  employeeId: string;
+  employeeName?: string;
+  userId: string;
+  deviceId: string;
+  takenAt: string;
+  createdAt: string;
+  imageUrl?: string;
+  storagePath: string;
+  downloadUrl?: string;
+  fileSizeBytes: number;
+  width: number;
+  height: number;
+  format: ScreenshotImageFormat;
+  status: ScreenshotUploadStatus;
+}
+
+export interface ScreenshotOutboxItem {
+  id: string;
+  sessionId: string;
+  employeeId: string;
+  employeeName?: string;
+  userId: string;
+  deviceId: string;
+  takenAt: string;
+  storagePath: string;
+  dataUrl?: string;
+  filePath?: string;
+  fileSizeBytes: number;
+  width: number;
+  height: number;
+  format: ScreenshotImageFormat;
+  status: 'pending' | 'failed';
+  retryCount: number;
+  lastAttemptAt?: string;
+  lastError?: string;
+}
+
+export interface ScreenshotFilters {
+  employeeId?: string;
+  sessionId?: string;
+  dateStr?: string;
+  startDate?: Date;
+  endDate?: Date;
+  limit?: number;
 }
 
 // ─── Pre-Authorized Monitoring Policy ─────────────────────────
@@ -510,7 +684,7 @@ export interface LocalScreenshotMetadata {
   fileSizeBytes: number;
   width: number;
   height: number;
-  format: 'png';
+  format: 'png' | 'jpg' | 'jpeg';
   isLocalOnly: true;
   retentionNotice: string;
 }
@@ -521,6 +695,7 @@ export interface CaptureScreenshotPayload {
   employeeId?: string;
   timestamp?: Date | string;
   checkScheduleHours?: boolean;
+  interactive?: boolean;
 }
 
 export type CaptureErrorCode =
@@ -624,4 +799,317 @@ export interface ScheduleStatusInfo {
   deviceApproved: boolean;
   statusText: string;
 }
+
+// ─── Phase 9: Firebase Authentication & Firestore Foundation ───
+
+export interface FirebaseClientConfig {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket: string;
+  messagingSenderId: string;
+  appId: string;
+}
+
+export interface UserAccount {
+  uid: string;
+  email: string;
+  contactEmail?: string;
+  displayName: string;
+  role: EmployeeRole;
+  employeeId?: string;
+  status: 'active' | 'disabled';
+  createdAt: string;
+  lastLoginAt?: string;
+  lastActiveAt?: any;
+  updatedAt?: any;
+}
+
+export interface FirestoreEmployeeDoc {
+  employeeId: string;
+  userId?: string;
+  name: string;
+  email: string;
+  department: string;
+  role: string;
+  status: 'active' | 'inactive' | 'suspended';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FirestoreDeviceDoc {
+  deviceId: string;
+  userId: string;
+  employeeId: string;
+  employeeName: string;
+  hostname: string;
+  platform: string;
+  approvalStatus: DeviceRegistrationStatus;
+  registeredAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  rejectionReason?: string;
+}
+
+export interface AuthState {
+  user: UserAccount | null;
+  loading: boolean;
+  error: string | null;
+  isConfigured: boolean;
+  isOfflineDemo: boolean;
+}
+
+export function formatAuthError(errorCode: string): string {
+  switch (errorCode) {
+    case 'auth/invalid-email':
+      return 'The email address is improperly formatted.';
+    case 'auth/user-disabled':
+      return 'This user account has been disabled. Contact an administrator.';
+    case 'auth/user-not-found':
+      return 'No account exists with this email address.';
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential':
+    case 'auth/invalid-login-credentials':
+      return 'Invalid email or password. Please verify your credentials.';
+    case 'auth/email-already-in-use':
+      return 'An account already exists with this email address.';
+    case 'auth/operation-not-allowed':
+      return 'Email/password sign-in is not enabled in Firebase Console.';
+    case 'auth/weak-password':
+      return 'The password must be at least 6 characters.';
+    case 'auth/too-many-requests':
+      return 'Access temporarily blocked due to many failed login attempts. Try again later.';
+    case 'auth/network-request-failed':
+      return 'Network error connecting to Firebase. Check your internet connection.';
+    case 'auth/requires-recent-login':
+      return 'Please log in again to perform this sensitive action.';
+    case 'auth/permission-denied':
+      return 'Insufficient permissions to perform this operation.';
+    case 'auth/unauthorized-role':
+      return 'Access Denied: Your account role is not authorized for this application.';
+    default:
+      return errorCode ? `Authentication error: ${errorCode}` : 'An unknown authentication error occurred.';
+  }
+}
+
+// ─── Employee ID & Synthetic Auth Email Mapping ───────────────
+export const SYNTHETIC_AUTH_EMAIL_DOMAIN = 'worktrack.internal';
+
+/**
+ * Strict Employee ID format:
+ * - 3 to 32 characters total
+ * - Must begin with an alphanumeric character (a-z, A-Z, 0-9)
+ * - May contain letters, digits, hyphens (-), and underscores (_)
+ * - Strict rejection of invalid characters, whitespace, or empty strings
+ */
+export const EMPLOYEE_ID_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_-]{2,31}$/;
+
+/**
+ * Normalizes an Employee ID:
+ * - Trims leading/trailing whitespace
+ * - Strictly validates format against EMPLOYEE_ID_REGEX
+ * - Rejects invalid characters (does NOT silently strip or alter them)
+ * - Converts to lowercase for case-insensitive consistency
+ */
+export function normalizeEmployeeId(id: string): string {
+  if (!id || typeof id !== 'string') {
+    throw new Error('Employee ID must be a non-empty string.');
+  }
+  const trimmed = id.trim();
+  if (!EMPLOYEE_ID_REGEX.test(trimmed)) {
+    throw new Error(
+      `Invalid Employee ID "${id}". Must be 3–32 characters, start with a letter or digit, and contain only letters, numbers, hyphens, or underscores.`
+    );
+  }
+  return trimmed.toLowerCase();
+}
+
+/**
+ * Validates an Employee ID safely without throwing.
+ */
+export function validateEmployeeId(id: string): { valid: boolean; normalized?: string; error?: string } {
+  try {
+    const normalized = normalizeEmployeeId(id);
+    return { valid: true, normalized };
+  } catch (err: any) {
+    return { valid: false, error: err.message || 'Invalid Employee ID' };
+  }
+}
+
+/**
+ * Deterministically constructs the internal Firebase Authentication email alias for an Employee ID.
+ * Example: 'emp_001' -> 'emp_001@worktrack.internal'
+ * Throws if the employee ID does not pass strict format validation.
+ */
+export function formatEmployeeAuthEmail(employeeId: string): string {
+  const normalized = normalizeEmployeeId(employeeId);
+  return `${normalized}@${SYNTHETIC_AUTH_EMAIL_DOMAIN}`;
+}
+
+/**
+ * Returns true if the email address corresponds to an internal synthetic employee auth alias.
+ */
+export function isSyntheticAuthEmail(email: string): boolean {
+  if (!email || typeof email !== 'string') return false;
+  return email.toLowerCase().endsWith(`@${SYNTHETIC_AUTH_EMAIL_DOMAIN}`);
+}
+
+/**
+ * Extracts and normalizes the Employee ID from a synthetic email alias.
+ * Returns null if the email does not match the synthetic domain or format.
+ */
+export function extractEmployeeIdFromAuthEmail(email: string): string | null {
+  if (!isSyntheticAuthEmail(email)) return null;
+  const parts = email.toLowerCase().split('@');
+  if (parts.length !== 2) return null;
+  const candidate = parts[0];
+  const validation = validateEmployeeId(candidate);
+  return validation.valid ? validation.normalized! : null;
+}
+
+// ─── Password Strength Validation ─────────────────────────────
+export interface PasswordStrengthResult {
+  valid: boolean;
+  score: number; // 0 to 4
+  errors: string[];
+}
+
+/**
+ * Validates password strength:
+ * - At least 8 characters
+ * - At least 1 uppercase letter
+ * - At least 1 lowercase letter
+ * - At least 1 number
+ * - At least 1 special character
+ * - No whitespace
+ */
+export function validatePasswordStrength(password: string): PasswordStrengthResult {
+  const errors: string[] = [];
+  if (!password || typeof password !== 'string') {
+    return { valid: false, score: 0, errors: ['Password is required.'] };
+  }
+
+  if (password.length < 8) {
+    errors.push('Password must be at least 8 characters long.');
+  }
+  if (!/[A-Z]/.test(password)) {
+    errors.push('Password must contain at least one uppercase letter (A-Z).');
+  }
+  if (!/[a-z]/.test(password)) {
+    errors.push('Password must contain at least one lowercase letter (a-z).');
+  }
+  if (!/[0-9]/.test(password)) {
+    errors.push('Password must contain at least one number (0-9).');
+  }
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(password)) {
+    errors.push('Password must contain at least one special character (!@#$%^&*...).');
+  }
+  if (/\s/.test(password)) {
+    errors.push('Password cannot contain spaces.');
+  }
+
+  let score = 0;
+  if (password.length >= 8) score++;
+  if (password.length >= 12) score++;
+  if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score++;
+  if (/[0-9]/.test(password) && /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(password)) score++;
+
+  return {
+    valid: errors.length === 0,
+    score: Math.min(4, score),
+    errors,
+  };
+}
+
+/**
+ * Cryptographically generates a secure random password using Web Crypto API.
+ */
+export function generateSecurePassword(length = 16): string {
+  const charsetUpper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const charsetLower = 'abcdefghijkmnopqrstuvwxyz';
+  const charsetNumbers = '23456789';
+  const charsetSymbols = '!@#$%^&*_-+=';
+  const allChars = charsetUpper + charsetLower + charsetNumbers + charsetSymbols;
+
+  const cryptoObj =
+    typeof globalThis !== 'undefined' && globalThis.crypto
+      ? globalThis.crypto
+      : null;
+
+  if (!cryptoObj || typeof cryptoObj.getRandomValues !== 'function') {
+    // Fallback if crypto is unavailable in legacy environments
+    throw new Error('Cryptographically secure random values (crypto.getRandomValues) is required.');
+  }
+
+  const getRandomChar = (chars: string) => {
+    const array = new Uint32Array(1);
+    cryptoObj.getRandomValues(array);
+    return chars[array[0] % chars.length];
+  };
+
+  // Guarantee at least one from each character set
+  const requiredChars = [
+    getRandomChar(charsetUpper),
+    getRandomChar(charsetLower),
+    getRandomChar(charsetNumbers),
+    getRandomChar(charsetSymbols),
+  ];
+
+  // Fill remaining length
+  const remainingLength = Math.max(0, length - requiredChars.length);
+  const remainingChars: string[] = [];
+  const randomIndices = new Uint32Array(remainingLength);
+  cryptoObj.getRandomValues(randomIndices);
+  for (let i = 0; i < remainingLength; i++) {
+    remainingChars.push(allChars[randomIndices[i] % allChars.length]);
+  }
+
+  // Shuffle array using Fisher-Yates with crypto random values
+  const combined = [...requiredChars, ...remainingChars];
+  const shuffleValues = new Uint32Array(combined.length);
+  cryptoObj.getRandomValues(shuffleValues);
+  for (let i = combined.length - 1; i > 0; i--) {
+    const j = shuffleValues[i] % (i + 1);
+    const temp = combined[i];
+    combined[i] = combined[j];
+    combined[j] = temp;
+  }
+
+  return combined.join('');
+}
+
+// ─── Automated Provisioning Types ─────────────────────────────
+export interface ProvisionEmployeePayload {
+  employeeId: string;
+  name: string;
+  contactEmail: string;
+  department: string;
+  role?: EmployeeRole;
+  initialPassword: string;
+}
+
+export interface ProvisionEmployeeResult {
+  success: boolean;
+  uid: string;
+  employeeId: string;
+  authEmail: string;
+  contactEmail: string;
+  name: string;
+  role: EmployeeRole;
+  department: string;
+}
+
+// ─── Reset Password Types ─────────────────────────────────────
+export interface ResetEmployeePasswordPayload {
+  employeeId: string;
+  newPassword: string;
+}
+
+export interface ResetEmployeePasswordResult {
+  success: boolean;
+  employeeId: string;
+  uid: string;
+  updatedAt: string;
+}
+
 
