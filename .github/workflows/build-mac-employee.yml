@@ -30,12 +30,28 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
+      - name: Fix 7zip-bin for macOS runners
+        run: |
+          brew install p7zip || true
+          SEVEN_ZA=$(which 7za || which 7z || true)
+          for dir in node_modules/7zip-bin apps/employee-app/node_modules/7zip-bin; do
+            mkdir -p "$dir/mac/arm64" "$dir/mac/x64"
+            if [ -n "$SEVEN_ZA" ] && [ -f "$SEVEN_ZA" ]; then
+              cp "$SEVEN_ZA" "$dir/mac/arm64/7za"
+              cp "$SEVEN_ZA" "$dir/mac/x64/7za"
+            elif [ -f "$dir/mac/x64/7za" ]; then
+              cp "$dir/mac/x64/7za" "$dir/mac/arm64/7za"
+            fi
+            chmod +x "$dir/mac/arm64/7za" "$dir/mac/x64/7za" 2>/dev/null || true
+          done
+
       - name: Build Shared Package
         run: npm run build:shared
 
       - name: Build Employee App DMG (arm64 & x64)
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          USE_SYSTEM_7ZA: "true"
         run: npm run build:employee:mac
 
       - name: Upload macOS Installer (.dmg)
@@ -47,3 +63,4 @@ jobs:
             apps/employee-app/release-mac/*.zip
           retention-days: 14
           if-no-files-found: error
+
