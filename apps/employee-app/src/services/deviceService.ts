@@ -3,6 +3,10 @@ import {
   doc,
   setDoc,
   getDoc,
+  getDocs,
+  collection,
+  query,
+  where,
   onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore'
@@ -124,22 +128,30 @@ class DeviceService {
     const info = await this.getDeviceInfo()
     const { db, auth } = getFirebaseInstance()
 
-    // 1. Check if Firestore already has a record for this device
-    if (db) {
+    // 1. If user is authenticated, check if they already have an existing/approved device in Firestore
+    if (db && auth?.currentUser) {
       try {
-        const deviceRef = doc(db, 'devices', info.deviceId)
-        const snap = await getDoc(deviceRef)
-        if (snap.exists()) {
-          const data = snap.data()
-          const firestoreStatus = (data.approvalStatus || data.status || 'pending_approval') as DeviceRegistrationStatus
+        const userDevicesQuery = query(
+          collection(db, 'devices'),
+          where('userId', '==', auth.currentUser.uid)
+        )
+        const userDevSnap = await getDocs(userDevicesQuery)
+        let matchingDoc: any = null
+        if (!userDevSnap.empty) {
+          matchingDoc = userDevSnap.docs.find(d => d.data().approvalStatus === 'approved') || userDevSnap.docs[0]
+        }
+
+        if (matchingDoc) {
+          const data = matchingDoc.data()
+          const matchedDeviceId = matchingDoc.id
           const record: DeviceRegistrationRecord = {
-            deviceId: info.deviceId,
+            deviceId: matchedDeviceId,
             deviceName: data.deviceName || data.name || info.deviceName,
             hostname: data.hostname || info.hostname,
-            employeeId: data.employeeId || payload.employeeId,
-            employeeName: data.employeeName || payload.employeeName,
+            employeeId: payload.employeeId || data.employeeId,
+            employeeName: payload.employeeName || data.employeeName,
             department: data.department || payload.department || 'General',
-            status: firestoreStatus,
+            status: (data.approvalStatus || data.status || 'approved') as DeviceRegistrationStatus,
             requestedAt: data.registeredAt?.toDate ? data.registeredAt.toDate().toISOString() : (data.requestedAt || new Date().toISOString()),
             reviewedAt: data.reviewedAt?.toDate ? data.reviewedAt.toDate().toISOString() : data.reviewedAt,
             reviewedBy: data.reviewedBy,
@@ -149,11 +161,43 @@ class DeviceService {
           return record
         }
       } catch (err) {
+        console.warn('[DeviceService] Could not check user devices in Firestore:', err)
+      }
+    }
+
+    // 2. Check if Firestore already has a record for info.deviceId
+    if (db) {
+      try {
+        const deviceRef = doc(db, 'devices', info.deviceId)
+        const snap = await getDoc(deviceRef)
+        if (snap.exists()) {
+          const data = snap.data()
+          // Only adopt if device matches current user or unassigned
+          if (!data.userId || !auth?.currentUser || data.userId === auth.currentUser.uid || data.employeeId === payload.employeeId) {
+            const firestoreStatus = (data.approvalStatus || data.status || 'pending_approval') as DeviceRegistrationStatus
+            const record: DeviceRegistrationRecord = {
+              deviceId: info.deviceId,
+              deviceName: data.deviceName || data.name || info.deviceName,
+              hostname: data.hostname || info.hostname,
+              employeeId: payload.employeeId || data.employeeId,
+              employeeName: payload.employeeName || data.employeeName,
+              department: data.department || payload.department || 'General',
+              status: firestoreStatus,
+              requestedAt: data.registeredAt?.toDate ? data.registeredAt.toDate().toISOString() : (data.requestedAt || new Date().toISOString()),
+              reviewedAt: data.reviewedAt?.toDate ? data.reviewedAt.toDate().toISOString() : data.reviewedAt,
+              reviewedBy: data.reviewedBy,
+              rejectionReason: data.rejectionReason,
+            }
+            await this.saveRegistrationRecord(record)
+            return record
+          }
+        }
+      } catch (err) {
         console.warn('[DeviceService] Could not check Firestore for device:', err)
       }
     }
 
-    // 2. If not registered in Firestore yet, create device document
+    // 3. If not registered in Firestore yet, create device document
     if (db && auth?.currentUser) {
       try {
         const deviceRef = doc(db, 'devices', info.deviceId)

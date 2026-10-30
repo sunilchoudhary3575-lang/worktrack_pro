@@ -17,7 +17,7 @@ import {
 } from '@worktrack-pro/shared'
 import { deviceService } from './deviceService'
 import { getFirebaseInstance, employeeAuthService } from './firebaseAuth'
-import { doc, setDoc } from 'firebase/firestore'
+import { doc, setDoc, collection, query, where, getDocs } from 'firebase/firestore'
 
 const LOCAL_STORAGE_ACTIVE_SESSION = 'worktrack_active_session'
 const LOCAL_STORAGE_SESSION_HISTORY = 'worktrack_session_history'
@@ -275,6 +275,32 @@ export class SessionService {
         }
       } catch {
         localStorage.removeItem(LOCAL_STORAGE_ACTIVE_SESSION)
+      }
+    }
+
+    // Cloud Firestore fallback check if local storage was cleared or logging in on fresh machine
+    const { db, auth } = getFirebaseInstance()
+    if (db && auth?.currentUser) {
+      try {
+        const q = query(
+          collection(db, 'work_sessions'),
+          where('userId', '==', auth.currentUser.uid),
+          where('status', 'in', ['working', 'on_break', 'active', 'paused'])
+        )
+        const snap = await getDocs(q)
+        if (!snap.empty) {
+          const docData = snap.docs[0].data()
+          const session = this.deserializeSession({ ...docData, id: snap.docs[0].id })
+          if (session) {
+            const reconciled = await this.reconcileActiveSession(session)
+            if (reconciled) {
+              await this.saveActiveSession(reconciled)
+              return reconciled
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[SessionService] Cloud active session check warning:', err)
       }
     }
 
@@ -639,12 +665,20 @@ export class SessionService {
       const sessionDocRef = doc(db, 'work_sessions', session.id)
       const nowIso = new Date().toISOString()
 
+      let targetDeviceId = session.deviceId
+      try {
+        const regRecord = await deviceService.getRegistrationRecord()
+        if (regRecord && regRecord.status === 'approved' && regRecord.deviceId) {
+          targetDeviceId = regRecord.deviceId
+        }
+      } catch {}
+
       const payload: any = {
         id: session.id,
         sessionId: session.id,
         userId: authUid,
         employeeId: session.employeeId,
-        deviceId: session.deviceId,
+        deviceId: targetDeviceId,
         status: firestoreStatus,
         startedAt: session.startedAt instanceof Date ? session.startedAt.toISOString() : new Date(session.startedAt).toISOString(),
         durationSeconds: session.durationSeconds || 0,
@@ -681,7 +715,7 @@ export class SessionService {
 
   // ─── Internal Persistence Helpers ──────────────────────────
 
-  private async saveActiveSession(session: WorkSession): Promise<void> {
+  async saveActiveSession(session: WorkSession): Promise<void> {
     const serialized = this.serializeSession(session)
     const api = (window as any).electronAPI
 
@@ -697,7 +731,7 @@ export class SessionService {
     localStorage.setItem(LOCAL_STORAGE_ACTIVE_SESSION, JSON.stringify(serialized))
   }
 
-  private async clearActiveSession(): Promise<void> {
+  public async clearActiveSession(): Promise<void> {
     const api = (window as any).electronAPI
 
     if (api) {

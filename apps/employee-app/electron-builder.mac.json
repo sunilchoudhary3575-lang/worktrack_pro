@@ -1,0 +1,68 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.worktrackpro.employee",
+  "productName": "WorkTrack Pro Employee",
+  "electronVersion": "28.2.0",
+  "directories": {
+    "output": "release-mac",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "mac": {
+    "category": "public.app-category.business",
+    "target": [
+      {
+        "target": "dmg",
+        "arch": [
+          "arm64",
+          "x64"
+        ]
+      },
+      {
+        "target": "zip",
+        "arch": [
+          "arm64",
+          "x64"
+        ]
+      }
+    ],
+    "artifactName": "WorkTrackPro-Employee-Mac-${arch}.${ext}",
+    "identity": null,
+    "gatekeeperAssess": false,
+    "entitlements": "build/entitlements.mac.plist",
+    "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+    "extendInfo": {
+      "NSScreenCaptureUsageDescription": "WorkTrack Pro requires screen recording access to record screenshots during active working sessions.",
+      "NSAppleEventsUsageDescription": "WorkTrack Pro requires system events permission to monitor application activity during work shifts.",
+      "NSHighResolutionCapable": true,
+      "LSMinimumSystemVersion": "10.15.0"
+    }
+  },
+  "dmg": {
+    "title": "WorkTrack Pro Employee",
+    "contents": [
+      {
+        "x": 130,
+        "y": 220
+      },
+      {
+        "x": 410,
+        "y": 220,
+        "type": "link",
+        "path": "/Applications"
+      }
+    ],
+    "window": {
+      "width": 540,
+      "height": 380
+    }
+  },
+  "extraMetadata": {
+    "main": "electron/main.js"
+  }
+}
+

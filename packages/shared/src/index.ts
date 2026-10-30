@@ -1112,4 +1112,16 @@ export interface ResetEmployeePasswordResult {
   updatedAt: string;
 }
 
+// ─── Delete Employee Types ─────────────────────────────────────
+export interface DeleteEmployeePayload {
+  employeeId: string;
+  userId?: string;
+}
+
+export interface DeleteEmployeeResult {
+  success: boolean;
+  employeeId: string;
+  deletedAt: string;
+}
+
 

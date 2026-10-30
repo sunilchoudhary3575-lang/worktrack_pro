@@ -14,6 +14,7 @@
     "dev:employee": "npm run dev --workspace=apps/employee-app",
     "build:admin": "npm run build --workspace=apps/admin-app",
     "build:employee": "npm run build --workspace=apps/employee-app",
+    "build:employee:mac": "npm run build:mac --workspace=apps/employee-app",
     "build:shared": "npm run build --workspace=packages/shared",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",

@@ -81,7 +81,7 @@ export default function CleanWorkScreen({
 
     async function loadData() {
       try {
-        const [active, reg, history] = await Promise.all([
+        let [active, reg, history] = await Promise.all([
           sessionService.getActiveSession(),
           deviceService.getRegistrationRecord(),
           sessionService.getHistory(),
@@ -89,8 +89,24 @@ export default function CleanWorkScreen({
 
         if (!isMounted) return
 
+        // Discard stale active session if it belongs to a different employee
+        if (active && active.employeeId && active.employeeId !== employeeId) {
+          console.warn(`[CleanWorkScreen] Discarding stale session from different employee (${active.employeeId} vs current ${employeeId})`)
+          await sessionService.clearActiveSession()
+          active = null
+        }
+
         if (active) {
+          if (active.deviceId !== deviceId) {
+            console.log(`[CleanWorkScreen] Auto-repairing active session deviceId: ${active.deviceId} -> ${deviceId}`)
+            active.deviceId = deviceId
+            await sessionService.saveActiveSession(active).catch(() => {})
+          }
           setSession(active)
+          // Electron's background scheduler can create the local session while
+          // the renderer is asleep. Re-sync it when the UI resumes so Admin
+          // and screenshot uploads can see the same active session.
+          await sessionService.syncSessionToFirestore(active).catch(() => false)
           // Ensure auto screenshot capture runs if session is active with latest cloud interval
           if (active.status === 'working') {
             await screenshotService.fetchCloudSettings().catch(() => {})
@@ -156,6 +172,21 @@ export default function CleanWorkScreen({
     // Start background schedule loop (evaluates every 15s to auto-start at 09:30 or auto-end at 18:30)
     scheduleService.startBackgroundLoop(15000)
 
+    // Keep a locally-running session mirrored in Firestore. This also retries
+    // when Firebase auth finishes initializing after the first screen load.
+    const syncActiveSession = async () => {
+      try {
+        const active = await sessionService.getActiveSession()
+        if (active && (active.status === 'working' || active.status === 'on_break')) {
+          await sessionService.syncSessionToFirestore(active)
+        }
+      } catch (err) {
+        console.warn('[CleanWorkScreen] Active session cloud sync retry failed:', err)
+      }
+    }
+    const syncTimer = setInterval(syncActiveSession, 15000)
+    syncActiveSession()
+
     // Listen to real-time device approval updates from Admin
     const unsubDevice = deviceService.subscribeToDeviceApproval(deviceId, updated => {
       if (isMounted) {
@@ -176,7 +207,7 @@ export default function CleanWorkScreen({
     const api = typeof window !== 'undefined' ? (window as any).electronAPI : null
     let unlistenIpc: (() => void) | null = null
     if (api?.on) {
-      unlistenIpc = api.on('session:scheduleUpdated', (data: any) => {
+          unlistenIpc = api.on('session:scheduleUpdated', async (data: any) => {
         if (data?.action === 'ended') {
           screenshotService.stopAutoCapture()
           sessionService.getActiveSession().then(act => {
@@ -189,8 +220,9 @@ export default function CleanWorkScreen({
             }
           })
         } else if (data?.action === 'started' && data?.session) {
-          sessionService.getActiveSession().then(act => {
+          sessionService.getActiveSession().then(async act => {
             const current = act || data.session
+            await sessionService.syncSessionToFirestore(current).catch(() => false)
             if (isMounted) {
               setSession(current)
               screenshotService.startAutoCapture({
@@ -208,6 +240,7 @@ export default function CleanWorkScreen({
 
     return () => {
       isMounted = false
+      clearInterval(syncTimer)
       scheduleService.stopBackgroundLoop()
       unsubDevice()
       unsubSettings()
@@ -395,7 +428,7 @@ export default function CleanWorkScreen({
         if (uploadRes.success) {
           showToast('📸 Screenshot captured & synced to Admin Portal!')
         } else {
-          showToast('📸 Screenshot captured and queued for sync.')
+          showToast(`📸 ${uploadRes.error || 'Screenshot captured and queued for sync.'}`)
         }
       } else {
         showToast(res.error || 'Failed to capture screenshot.')
