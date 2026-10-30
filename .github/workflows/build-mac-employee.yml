@@ -28,17 +28,32 @@ jobs:
       - name: Fix 7zip-bin for macOS runners
         run: |
           brew install p7zip || true
-          SEVEN_ZA=$(which 7za || which 7z || true)
+          SEVEN_ZA=""
+          if [ -f "/opt/homebrew/bin/7za" ]; then
+            SEVEN_ZA="/opt/homebrew/bin/7za"
+          elif [ -f "/usr/local/bin/7za" ]; then
+            SEVEN_ZA="/usr/local/bin/7za"
+          elif command -v 7za >/dev/null 2>&1; then
+            SEVEN_ZA=$(command -v 7za)
+          elif [ -f "node_modules/7zip-bin/mac/x64/7za" ]; then
+            SEVEN_ZA="node_modules/7zip-bin/mac/x64/7za"
+          fi
+          echo "Using 7za from: $SEVEN_ZA"
+
           for dir in node_modules/7zip-bin apps/employee-app/node_modules/7zip-bin; do
             mkdir -p "$dir/mac/arm64" "$dir/mac/x64"
             if [ -n "$SEVEN_ZA" ] && [ -f "$SEVEN_ZA" ]; then
-              cp "$SEVEN_ZA" "$dir/mac/arm64/7za"
-              cp "$SEVEN_ZA" "$dir/mac/x64/7za"
-            elif [ -f "$dir/mac/x64/7za" ]; then
-              cp "$dir/mac/x64/7za" "$dir/mac/arm64/7za"
+              cp -f "$SEVEN_ZA" "$dir/mac/arm64/7za"
+              cp -f "$SEVEN_ZA" "$dir/mac/x64/7za"
+              chmod +x "$dir/mac/arm64/7za" "$dir/mac/x64/7za"
             fi
-            chmod +x "$dir/mac/arm64/7za" "$dir/mac/x64/7za" 2>/dev/null || true
           done
+
+          if [ -n "$SEVEN_ZA" ] && [ -f "$SEVEN_ZA" ]; then
+            cp -f "$SEVEN_ZA" ./7za
+            cp -f "$SEVEN_ZA" apps/employee-app/7za
+            chmod +x ./7za apps/employee-app/7za
+          fi
 
       - name: Build Shared Package
         run: npm run build:shared
@@ -46,7 +61,6 @@ jobs:
       - name: Build Employee App DMG (arm64 & x64)
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          USE_SYSTEM_7ZA: "true"
         run: npm run build:employee:mac
 
       - name: Upload macOS Installer (.dmg)
