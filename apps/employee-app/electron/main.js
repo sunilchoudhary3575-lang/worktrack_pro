@@ -167,7 +167,12 @@ app.whenReady().then(() => {
   createWindow()
   startBackgroundScheduler()
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+    } else if (mainWindow) {
+      mainWindow.show()
+      mainWindow.focus()
+    }
   })
 
   if (powerMonitor) {
@@ -468,31 +473,47 @@ function evaluateScheduleInBackground() {
     const now = new Date()
     const todayStr = getTodayDateStr(now)
 
-    // Check device approval
-    const regFile = getRegistrationFilePath()
-    if (!fs.existsSync(regFile)) return
-    const reg = JSON.parse(fs.readFileSync(regFile, 'utf8'))
-    if (!reg || reg.status !== 'approved') return
-
-    // Check onboarding policy
-    const onboarding = loadOnboardingRecord()
-    if (!onboarding || !onboarding.agreedToTerms) return
-
-    // Check authorization
-    const authFile = getMonitoringAuthFilePath()
-    if (!fs.existsSync(authFile)) return
-    const auth = JSON.parse(fs.readFileSync(authFile, 'utf8'))
-    if (!auth || auth.status !== 'granted') return
-
-    // Active session
+    // Read the local session before validating the current registration/auth
+    // state. A session that was already started must still be closed at the
+    // shift boundary even if a device approval or authorization record is
+    // temporarily missing/stale on this machine.
     const activeFile = getActiveSessionFilePath()
     let activeSession = null
     if (fs.existsSync(activeFile)) {
       try {
         activeSession = JSON.parse(fs.readFileSync(activeFile, 'utf8'))
-      } catch {}
+      } catch (err) {
+        console.warn('[Employee Main] Failed to read active session:', err)
+      }
     }
+    const activeSessionNeedsEnd =
+      activeSession &&
+      (activeSession.status === 'working' || activeSession.status === 'on_break') &&
+      !isWithinWorkingHours(now)
 
+    // Check device approval
+    const regFile = getRegistrationFilePath()
+    if (!fs.existsSync(regFile) && !activeSessionNeedsEnd) return
+    let reg = null
+    if (fs.existsSync(regFile)) {
+      try { reg = JSON.parse(fs.readFileSync(regFile, 'utf8')) } catch {}
+    }
+    if ((!reg || reg.status !== 'approved') && !activeSessionNeedsEnd) return
+
+    // Check onboarding policy
+    const onboarding = loadOnboardingRecord()
+    if ((!onboarding || !onboarding.agreedToTerms) && !activeSessionNeedsEnd) return
+
+    // Check authorization
+    const authFile = getMonitoringAuthFilePath()
+    if (!fs.existsSync(authFile) && !activeSessionNeedsEnd) return
+    let auth = null
+    if (fs.existsSync(authFile)) {
+      try { auth = JSON.parse(fs.readFileSync(authFile, 'utf8')) } catch {}
+    }
+    if ((!auth || auth.status !== 'granted') && !activeSessionNeedsEnd) return
+
+    // Active session
     const state = loadScheduleState()
     const inHours = isWithinWorkingHours(now)
 
@@ -718,6 +739,14 @@ ipcMain.handle('device:saveRegistration', async (_event, record) => {
     const filePath = getRegistrationFilePath()
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
     fs.writeFileSync(filePath, JSON.stringify(record, null, 2), 'utf8')
+
+    if (record.deviceId) {
+      try {
+        const idFile = path.join(app.getPath('userData'), 'device-identity.json')
+        fs.writeFileSync(idFile, JSON.stringify({ deviceId: record.deviceId }), 'utf8')
+      } catch {}
+    }
+
     return { success: true, data: record }
   } catch (err) {
     return { success: false, error: String(err) }
@@ -1289,5 +1318,4 @@ ipcMain.handle('tray:updateStatus', async (_event, statusText) => {
   }
   return { success: true }
 })
-
 

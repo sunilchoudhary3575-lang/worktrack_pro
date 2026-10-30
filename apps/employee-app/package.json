@@ -1,6 +1,6 @@
 {
   "name": "@worktrack-pro/employee-app",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "WorkTrack Pro — Employee Desktop Application",
   "author": "WorkTrack Pro Team",
   "private": true,
@@ -12,6 +12,7 @@
     "build": "npm run build:vite && npm run build:electron",
     "build:vite": "vite build",
     "build:electron": "electron-builder --win --config electron-builder.json",
+    "build:mac": "npm run build:vite && electron-builder --mac --config electron-builder.mac.json",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview"
   },

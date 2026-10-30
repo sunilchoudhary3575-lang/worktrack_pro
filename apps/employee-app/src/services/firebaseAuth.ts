@@ -30,29 +30,23 @@ let firebaseStorage: FirebaseStorage | null = null
 
 export function getFirebaseConfig() {
   const apiKey =
-    (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_FIREBASE_API_KEY) ||
-    (typeof process !== 'undefined' && process.env && process.env.VITE_FIREBASE_API_KEY) ||
-    ''
+    (import.meta.env && import.meta.env.VITE_FIREBASE_API_KEY) ||
+    'AIzaSyBnWERhx5gUrvMfOdiWs4_UFjsoD1lQjOs'
   const authDomain =
-    (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_FIREBASE_AUTH_DOMAIN) ||
-    (typeof process !== 'undefined' && process.env && process.env.VITE_FIREBASE_AUTH_DOMAIN) ||
-    ''
+    (import.meta.env && import.meta.env.VITE_FIREBASE_AUTH_DOMAIN) ||
+    'worktrack-pro-8aa42.firebaseapp.com'
   const projectId =
-    (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_FIREBASE_PROJECT_ID) ||
-    (typeof process !== 'undefined' && process.env && process.env.VITE_FIREBASE_PROJECT_ID) ||
-    ''
+    (import.meta.env && import.meta.env.VITE_FIREBASE_PROJECT_ID) ||
+    'worktrack-pro-8aa42'
   const storageBucket =
-    (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_FIREBASE_STORAGE_BUCKET) ||
-    (typeof process !== 'undefined' && process.env && process.env.VITE_FIREBASE_STORAGE_BUCKET) ||
-    ''
+    (import.meta.env && import.meta.env.VITE_FIREBASE_STORAGE_BUCKET) ||
+    'worktrack-pro-8aa42.firebasestorage.app'
   const messagingSenderId =
-    (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_FIREBASE_MESSAGING_SENDER_ID) ||
-    (typeof process !== 'undefined' && process.env && process.env.VITE_FIREBASE_MESSAGING_SENDER_ID) ||
-    ''
+    (import.meta.env && import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID) ||
+    '78060939079'
   const appId =
-    (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_FIREBASE_APP_ID) ||
-    (typeof process !== 'undefined' && process.env && process.env.VITE_FIREBASE_APP_ID) ||
-    ''
+    (import.meta.env && import.meta.env.VITE_FIREBASE_APP_ID) ||
+    '1:78060939079:web:ec778f4b051854e77a8e62'
 
   return {
     apiKey: String(apiKey).trim(),

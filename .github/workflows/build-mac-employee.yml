@@ -1,0 +1,49 @@
+name: Build macOS Employee App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'apps/employee-app/**'
+      - 'packages/shared/**'
+      - 'package.json'
+      - '.github/workflows/build-mac-employee.yml'
+
+jobs:
+  build-macos:
+    name: Build macOS DMG & ZIP
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build Shared Package
+        run: npm run build:shared
+
+      - name: Build Employee App DMG (arm64 & x64)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npm run build:employee:mac
+
+      - name: Upload macOS Installer (.dmg)
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorkTrackPro-Employee-MacOS
+          path: |
+            apps/employee-app/release-mac/*.dmg
+            apps/employee-app/release-mac/*.zip
+          retention-days: 14
+          if-no-files-found: error

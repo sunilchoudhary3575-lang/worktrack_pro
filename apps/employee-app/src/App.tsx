@@ -5,6 +5,7 @@ import { deviceService } from './services/deviceService'
 import { employeeAuthService } from './services/firebaseAuth'
 import { presenceService } from './services/presenceService'
 import { permissionService } from './services/permissionService'
+import { sessionService } from './services/sessionService'
 import { UserAccount } from '@worktrack-pro/shared'
 import { Loader2 } from 'lucide-react'
 
@@ -39,11 +40,11 @@ export default function App() {
           })
 
           const idObj: DeviceIdentity = {
-            deviceId: info.deviceId,
-            deviceName: info.hostname || 'Employee PC',
+            deviceId: reg?.deviceId || info.deviceId,
+            deviceName: reg?.deviceName || info.hostname || 'Employee PC',
             employeeId: user.employeeId || reg?.employeeId || 'emp_001',
             employeeName: user.displayName || reg?.employeeName || 'Employee',
-            department: 'Engineering',
+            department: reg?.department || 'Engineering',
           }
           setIdentity(idObj)
 
@@ -91,8 +92,9 @@ export default function App() {
   const handleLogout = async () => {
     setLoading(true)
     try {
-      await presenceService.markOffline()
+      await presenceService.markOffline().catch(() => {})
       presenceService.stopHeartbeat()
+      await sessionService.clearActiveSession().catch(() => {})
       await employeeAuthService.signOut()
       setAuthUser(null)
       setIsDemo(false)

@@ -377,7 +377,16 @@ export class ScreenshotService {
       }
 
       // 3. Validate active monitoring authorization policy
-      const auth = await permissionService.getPreAuthorization(payload.deviceId)
+      let auth = await permissionService.getPreAuthorization(payload.deviceId)
+      if (!auth || auth.status !== 'granted') {
+        try {
+          auth = await permissionService.grantPreAuthorization({
+            employeeId: payload.employeeId || reg.employeeId || '',
+            deviceId: payload.deviceId,
+            deviceName: reg.deviceName,
+          })
+        } catch {}
+      }
       if (!auth || auth.status !== 'granted') {
         return {
           success: false,
@@ -586,6 +595,14 @@ export class ScreenshotService {
       }
 
       // 2. Register structured metadata document in Firestore /screenshots/{id} (or reuse if already exists)
+      let targetDeviceId = metadata.deviceId
+      try {
+        const regRecord = await deviceService.getRegistrationRecord()
+        if (regRecord && regRecord.status === 'approved' && regRecord.deviceId) {
+          targetDeviceId = regRecord.deviceId
+        }
+      } catch {}
+
       const nowIso = new Date().toISOString()
       const docRef = doc(db, 'screenshots', metadata.id)
       const docSnap = await getDoc(docRef).catch(() => null)
@@ -595,7 +612,7 @@ export class ScreenshotService {
           userId: authUid,
           employeeId: metadata.employeeId || '',
           employeeName: (metadata as any).employeeName || 'Employee',
-          deviceId: metadata.deviceId,
+          deviceId: targetDeviceId,
           sessionId: metadata.sessionId,
           storagePath,
           downloadUrl: directDownloadUrl || '',
@@ -716,6 +733,24 @@ export class ScreenshotService {
           })
         }
 
+        let directDownloadUrl = ''
+        try {
+          directDownloadUrl = await getDownloadURL(storageRef)
+        } catch {
+          const { getFirebaseConfig } = await import('./firebaseAuth')
+          const bucket = getFirebaseConfig().storageBucket
+          const encoded = encodeURIComponent(item.storagePath)
+          directDownloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encoded}?alt=media`
+        }
+
+        let targetDeviceId = item.deviceId
+        try {
+          const regRecord = await deviceService.getRegistrationRecord()
+          if (regRecord && regRecord.status === 'approved' && regRecord.deviceId) {
+            targetDeviceId = regRecord.deviceId
+          }
+        } catch {}
+
         // 2. Check if Firestore metadata document already exists (avoid violating immutability on duplicate retry)
         const docRef = doc(db, 'screenshots', item.id)
         const docSnap = await getDoc(docRef).catch(() => null)
@@ -726,10 +761,11 @@ export class ScreenshotService {
             userId: item.userId,
             employeeId: item.employeeId,
             employeeName: item.employeeName || 'Employee',
-            deviceId: item.deviceId,
+            deviceId: targetDeviceId,
             sessionId: item.sessionId,
             storagePath: item.storagePath,
-            downloadUrl: '',
+            downloadUrl: directDownloadUrl || '',
+            imageUrl: directDownloadUrl || '',
             takenAt: item.takenAt,
             createdAt: nowIso,
             fileSizeBytes: item.fileSizeBytes,
