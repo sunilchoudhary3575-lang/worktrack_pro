@@ -665,6 +665,43 @@ export const dataService = {
     return { ...emp }
   },
 
+  deleteEmployee: async (employeeId: string, userId?: string): Promise<{ success: boolean; employeeId: string }> => {
+    if (isLiveFirestoreActive()) {
+      try {
+        return await firestoreDataService.deleteEmployee(employeeId, userId)
+      } catch (err) {
+        console.warn('[DataService] Firestore deleteEmployee failed, updating mock store:', err)
+      }
+    }
+
+    await delay(150)
+    const normalized = normalizeEmployeeId(employeeId)
+    const empIdx = MOCK_EMPLOYEES.findIndex(e => e.id.toLowerCase() === normalized)
+    if (empIdx !== -1) {
+      MOCK_EMPLOYEES.splice(empIdx, 1)
+    }
+
+    for (let i = MOCK_DEVICES.length - 1; i >= 0; i--) {
+      if (MOCK_DEVICES[i].employeeId.toLowerCase() === normalized) {
+        MOCK_DEVICES.splice(i, 1)
+      }
+    }
+
+    for (let i = MOCK_DEVICE_REGISTRATIONS.length - 1; i >= 0; i--) {
+      if (MOCK_DEVICE_REGISTRATIONS[i].employeeId.toLowerCase() === normalized) {
+        MOCK_DEVICE_REGISTRATIONS.splice(i, 1)
+      }
+    }
+
+    for (let i = MOCK_SESSIONS.length - 1; i >= 0; i--) {
+      if (MOCK_SESSIONS[i].employeeId.toLowerCase() === normalized) {
+        MOCK_SESSIONS.splice(i, 1)
+      }
+    }
+
+    return { success: true, employeeId: normalized }
+  },
+
   // Devices
   getDevices: async (): Promise<Device[]> => {
     if (isLiveFirestoreActive()) {

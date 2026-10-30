@@ -30,6 +30,7 @@ import {
   Key,
   KeyRound,
   RefreshCw,
+  Trash2,
 } from 'lucide-react'
 import { dataService, isLiveFirestoreActive } from '../services/dataService'
 import { SkeletonTable } from '../components/Skeleton'
@@ -59,6 +60,7 @@ import {
   validateEmployeeId,
   deriveAccountStatus,
   deriveDeviceApprovalState,
+  derivePresenceStatus,
   deriveEmployeePresence,
   deriveSessionState,
 } from '@worktrack-pro/shared'
@@ -118,6 +120,11 @@ export default function Employees() {
   const [showResetPasswordValue, setShowResetPasswordValue] = useState(false)
   const [resetPwdSubmitting, setResetPwdSubmitting] = useState(false)
   const [resetPwdError, setResetPwdError] = useState<string | null>(null)
+
+  // Delete Employee Modal State
+  const [deletingEmp, setDeletingEmp] = useState<Employee | null>(null)
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   // One-time credential dialog state (wiped on close)
   const [oneTimeCredentials, setOneTimeCredentials] = useState<{
@@ -226,8 +233,13 @@ export default function Employees() {
   }
 
   const getEmployeeActiveSession = (empId: string): WorkSession | undefined => {
+    const todayStr = currentTime.toDateString()
     const active = sessions.filter(
-      s => s.employeeId === empId && (s.status === 'working' || s.status === 'on_break' || s.status === 'active' || s.status === 'paused')
+      s =>
+        s.employeeId === empId &&
+        !s.endedAt &&
+        (s.status === 'working' || s.status === 'on_break' || s.status === 'active' || s.status === 'paused') &&
+        (s.startedAt instanceof Date ? s.startedAt : new Date(s.startedAt)).toDateString() === todayStr
     )
     if (active.length === 0) return undefined
     active.sort((a, b) => {
@@ -249,7 +261,11 @@ export default function Employees() {
   // ─── Pure State Derivations for an Employee ────────────────
   const getEmployeeStates = (emp: Employee) => {
     const empDevices = getEmployeeDevices(emp.id)
-    const primaryDev = empDevices[0] || getEmployeeDevice(emp.id)
+    const onlineDev = empDevices.find(d => {
+      const hb = d.lastHeartbeat || d.lastSeen
+      return derivePresenceStatus(hb, currentTime) === 'online'
+    })
+    const primaryDev = onlineDev || empDevices[0] || getEmployeeDevice(emp.id)
     const reg = getEmployeeRegistration(emp.id)
     const user = getEmployeeUser(emp)
     const activeSess = getEmployeeActiveSession(emp.id)
@@ -404,6 +420,33 @@ export default function Employees() {
       setResetPwdError(err?.message || 'Failed to reset employee password.')
     } finally {
       setResetPwdSubmitting(false)
+    }
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!deletingEmp) return
+    setDeleteSubmitting(true)
+    setDeleteError(null)
+
+    try {
+      await dataService.deleteEmployee(deletingEmp.id, deletingEmp.userId)
+
+      // Instantly update local states
+      setEmployees(prev => prev.filter(e => e.id !== deletingEmp.id))
+      setUsers(prev => prev.filter(u => u.employeeId !== deletingEmp.id && u.uid !== deletingEmp.userId))
+      setDevices(prev => prev.filter(d => d.employeeId !== deletingEmp.id))
+      setRegistrations(prev => prev.filter(r => r.employeeId !== deletingEmp.id))
+      setSessions(prev => prev.filter(s => s.employeeId !== deletingEmp.id))
+      if (selectedEmpId === deletingEmp.id) {
+        setSelectedEmpId(null)
+      }
+
+      showToast(`✓ Employee ${deletingEmp.name} (${deletingEmp.id}) deleted successfully.`)
+      setDeletingEmp(null)
+    } catch (err: any) {
+      setDeleteError(err?.message || 'Failed to delete employee account.')
+    } finally {
+      setDeleteSubmitting(false)
     }
   }
 
@@ -833,6 +876,16 @@ export default function Employees() {
                             title="Edit Employee Details"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setDeleteError(null)
+                              setDeletingEmp(emp)
+                            }}
+                            className="p-1.5 rounded-lg bg-surface-700/60 hover:bg-rose-600 hover:text-white text-rose-400/80 hover:text-white transition-colors"
+                            title={`Delete ${emp.name}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
@@ -1632,6 +1685,79 @@ export default function Employees() {
                 className="btn-primary w-full py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-600/20"
               >
                 I Have Saved The Credentials
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Delete Confirmation Modal ────────────────────────────── */}
+      {deletingEmp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+          <div className="bg-surface-800 border border-rose-500/30 rounded-2xl p-6 w-full max-w-md shadow-2xl relative space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-3 rounded-xl bg-rose-500/15 text-rose-400 flex-shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-white">Delete Employee Account</h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  Permanent removal from directory & database
+                </p>
+              </div>
+              <button
+                onClick={() => !deleteSubmitting && setDeletingEmp(null)}
+                className="p-1 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-colors"
+                disabled={deleteSubmitting}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-200 space-y-1.5 leading-relaxed">
+              <p>
+                Are you sure you want to permanently delete{' '}
+                <strong className="text-white font-semibold">{deletingEmp.name}</strong> (
+                <code className="text-rose-300 font-mono font-semibold">{deletingEmp.id}</code>)?
+              </p>
+              <p className="text-[11px] text-rose-200/70">
+                This will delete their employee profile, Firebase login credentials, assigned device records, and past work sessions. This action <strong>cannot be undone</strong>.
+              </p>
+            </div>
+
+            {deleteError && (
+              <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                <span>{deleteError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingEmp(null)}
+                disabled={deleteSubmitting}
+                className="btn-secondary py-2 px-4 text-xs font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={deleteSubmitting}
+                className="py-2 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-rose-600/20 transition-all cursor-pointer"
+              >
+                {deleteSubmitting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Employee</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

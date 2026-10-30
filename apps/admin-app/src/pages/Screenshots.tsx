@@ -213,7 +213,7 @@ export default function Screenshots() {
       // Text Search
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase()
-        const empName = scr.employeeName || employees.find(e => e.id === scr.employeeId)?.name || ''
+        const empName = employees.find(e => e.id === scr.employeeId)?.name || scr.employeeName || ''
         const matchesName = empName.toLowerCase().includes(q)
         const matchesId = scr.employeeId.toLowerCase().includes(q)
         const matchesDevice = scr.deviceId.toLowerCase().includes(q)
@@ -232,9 +232,10 @@ export default function Screenshots() {
   }
 
   const getEmployeeDisplayName = (empId: string, fallbackName?: string) => {
-    if (fallbackName && fallbackName !== 'Employee') return fallbackName
     const found = employees.find(e => e.id === empId)
-    return found ? found.name : empId
+    if (found?.name) return found.name
+    if (fallbackName && fallbackName !== 'Employee') return fallbackName
+    return empId
   }
 
   // Lightbox Navigation (Next / Previous)

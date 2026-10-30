@@ -185,7 +185,7 @@ export default function Dashboard() {
     return derivePresenceStatus(hb, currentTime) === 'online'
   }).length
 
-  // An active work session must belong to today and to an employee who is currently online with an active approved device
+  // Active sessions for stat card: today's sessions where employee device is online
   const activeSessions = sessions.filter(s => {
     if (s.status !== 'working' && s.status !== 'active' && s.status !== 'on_break' && s.status !== 'paused') {
       return false
@@ -196,6 +196,19 @@ export default function Dashboard() {
     if (sDate.toDateString() !== currentTime.toDateString()) {
       return false
     }
+    const empDevices = devices.filter(d => d.employeeId === s.employeeId)
+    return deriveEmployeePresence(empDevices, undefined, currentTime) === 'online'
+  })
+
+  // All active sessions for Working/OnBreak badge: checks session status, today's date,
+  // AND employee presence — Offline employees must NOT show Working badge
+  const allActiveSessions = sessions.filter(s => {
+    if (s.status !== 'working' && s.status !== 'active' && s.status !== 'on_break' && s.status !== 'paused') {
+      return false
+    }
+    if (s.endedAt) return false
+    const sDate = s.startedAt instanceof Date ? s.startedAt : new Date(s.startedAt)
+    if (sDate.toDateString() !== currentTime.toDateString()) return false
     const empDevices = devices.filter(d => d.employeeId === s.employeeId)
     return deriveEmployeePresence(empDevices, undefined, currentTime) === 'online'
   })
@@ -284,9 +297,13 @@ export default function Dashboard() {
             <div className="space-y-2">
               {employees.map(emp => {
                 const empDevices = devices.filter(d => d.employeeId === emp.id)
-                const primaryDev = empDevices[0]
+                const primaryDev =
+                  empDevices.find(d => {
+                    const hb = d.lastHeartbeat || d.lastSeen
+                    return derivePresenceStatus(hb, currentTime) === 'online'
+                  }) || empDevices[0]
                 const presence = deriveEmployeePresence(empDevices, undefined, currentTime)
-                const empActiveSession = activeSessions.find(s => s.employeeId === emp.id)
+                const empActiveSession = allActiveSessions.find(s => s.employeeId === emp.id)
                 const isWorking = !!empActiveSession && (empActiveSession.status === 'working' || empActiveSession.status === 'active')
                 const isOnBreak = !!empActiveSession && (empActiveSession.status === 'on_break' || empActiveSession.status === 'paused')
 
@@ -420,7 +437,7 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
             {recentScreenshots.map(scr => {
               const emp = employees.find(e => e.id === scr.employeeId)
-              const name = scr.employeeName || emp?.name || scr.employeeId
+              const name = emp?.name || scr.employeeName || scr.employeeId
               return (
                 <div
                   key={scr.id}

@@ -31,6 +31,8 @@ import type {
   ProvisionEmployeeResult,
   ResetEmployeePasswordPayload,
   ResetEmployeePasswordResult,
+  DeleteEmployeePayload,
+  DeleteEmployeeResult,
   UserAccount,
   DeviceStatus,
   DailySummary,
@@ -82,7 +84,9 @@ export function formatCallableError(err: any, fallbackMessage: string): Formatte
   let finalMessage = sanitized || fallbackMessage
 
   // If the error message is just "internal" or code is functions/internal
-  if (rawCode === 'functions/internal' || sanitized.toLowerCase() === 'internal') {
+  if (sanitized && sanitized.toLowerCase() !== 'internal') {
+    finalMessage = sanitized
+  } else if (rawCode === 'functions/internal' || sanitized.toLowerCase() === 'internal') {
     finalMessage = 'The server encountered an internal error while processing the request. Please verify backend permissions or try again later.'
   } else if (rawCode === 'functions/unauthenticated') {
     finalMessage = 'Authentication required. Your administrative session may have expired; please re-login.'
@@ -271,6 +275,78 @@ export class FirestoreDataService {
     })
 
     return this.getEmployee(id)
+  }
+
+  async deleteEmployee(employeeId: string, userId?: string): Promise<{ success: boolean; employeeId: string }> {
+    const db = this.getDb()
+    const { functions } = getFirebaseInstance()
+
+    if (functions) {
+      try {
+        const callable = httpsCallable<DeleteEmployeePayload, DeleteEmployeeResult>(
+          functions,
+          'deleteEmployeeAccount'
+        )
+        const res = await callable({ employeeId, userId })
+        return { success: res.data.success, employeeId }
+      } catch (err: any) {
+        console.warn('[FirestoreDataService] Cloud function deleteEmployeeAccount error, falling back to direct Firestore deletion:', err)
+      }
+    }
+
+    // Direct Firestore deletion
+    try {
+      const empRef = doc(db, 'employees', employeeId)
+      await deleteDoc(empRef)
+    } catch {}
+
+    try {
+      if (userId) {
+        await deleteDoc(doc(db, 'users', userId))
+      } else {
+        const usersSnap = await getDocs(query(collection(db, 'users'), where('employeeId', '==', employeeId)))
+        for (const d of usersSnap.docs) {
+          await deleteDoc(d.ref).catch(() => {})
+        }
+      }
+    } catch {}
+
+    try {
+      const devSnap = await getDocs(query(collection(db, 'devices'), where('employeeId', '==', employeeId)))
+      for (const d of devSnap.docs) {
+        await deleteDoc(d.ref).catch(() => {})
+      }
+    } catch {}
+
+    try {
+      const regSnap = await getDocs(query(collection(db, 'device_registrations'), where('employeeId', '==', employeeId)))
+      for (const d of regSnap.docs) {
+        await deleteDoc(d.ref).catch(() => {})
+      }
+    } catch {}
+
+    try {
+      const preSnap = await getDocs(query(collection(db, 'pre_authorizations'), where('employeeId', '==', employeeId)))
+      for (const d of preSnap.docs) {
+        await deleteDoc(d.ref).catch(() => {})
+      }
+    } catch {}
+
+    try {
+      const sessSnap = await getDocs(query(collection(db, 'work_sessions'), where('employeeId', '==', employeeId)))
+      for (const d of sessSnap.docs) {
+        await deleteDoc(d.ref).catch(() => {})
+      }
+    } catch {}
+
+    try {
+      const scSnap = await getDocs(query(collection(db, 'screenshots'), where('employeeId', '==', employeeId)))
+      for (const d of scSnap.docs) {
+        await deleteDoc(d.ref).catch(() => {})
+      }
+    } catch {}
+
+    return { success: true, employeeId }
   }
 
   // ─── 2. Devices Collection (/devices) ────────────────────────
@@ -581,7 +657,7 @@ export class FirestoreDataService {
     const db = this.getDb()
     try {
       const snap = await getDocs(collection(db, 'device_approvals'))
-      return snap.docs.map(d => {
+      return snap.docs.filter(d => !d.data().deviceId).map(d => {
         const data = d.data()
         return {
           id: d.id,

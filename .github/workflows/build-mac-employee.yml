@@ -6,11 +6,6 @@ on:
     branches:
       - main
       - master
-    paths:
-      - 'apps/employee-app/**'
-      - 'packages/shared/**'
-      - 'package.json'
-      - '.github/workflows/build-mac-employee.yml'
 
 jobs:
   build-macos:
